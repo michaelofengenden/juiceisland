@@ -1,0 +1,1 @@
+../../../Vendor/open-vibe-island/Sources/OpenIslandApp/TerminalSessionAttachmentProbe.swift

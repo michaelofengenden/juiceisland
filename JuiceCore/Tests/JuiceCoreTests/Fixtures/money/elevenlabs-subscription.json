@@ -1,0 +1,17 @@
+{
+  "tier": "starter",
+  "character_count": 2600,
+  "character_limit": 10000,
+  "can_extend_character_limit": false,
+  "allowed_to_extend_character_limit": false,
+  "next_character_count_reset_unix": 1790899200,
+  "voice_limit": 10,
+  "professional_voice_limit": 0,
+  "can_extend_voice_limit": false,
+  "can_use_instant_voice_cloning": true,
+  "can_use_professional_voice_cloning": false,
+  "currency": "usd",
+  "status": "active",
+  "billing_period": "monthly_period",
+  "character_refresh_period": "monthly_period"
+}

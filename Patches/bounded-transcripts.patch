@@ -1,0 +1,25 @@
+--- a/SessionDiscoveryCoordinator.swift
++++ b/SessionDiscoveryCoordinator.swift
+@@ -56,14 +56,19 @@
+     @ObservationIgnored
+     private let piSessionRegistry = PiSessionRegistry()
+ 
++    // Juice Island: reads each rollout within bounds, off the main thread (CodexRolloutTracker, P83).
+     @ObservationIgnored
+-    let codexRolloutWatcher = CodexRolloutWatcher()
++    let codexRolloutWatcher = CodexRolloutTracker()
+ 
++    // Juice Island: reads each rollout within bounds (CodexRolloutScanner, P83); the engine takes the subagents each
++    // pass finds (P212).
+     @ObservationIgnored
+-    private let codexRolloutDiscovery = CodexRolloutDiscovery()
++    let codexRolloutDiscovery = CodexRolloutScanner()
+ 
++    // Juice Island: reads each transcript within bounds (ClaudeTranscriptScanner, P84); the engine takes the chat
++    // titles its launch pass folded (P200).
+     @ObservationIgnored
+-    private let claudeTranscriptDiscovery = ClaudeTranscriptDiscovery()
++    let claudeTranscriptDiscovery = ClaudeTranscriptScanner()
+ 
+     @ObservationIgnored
+     private var codexSessionPersistenceTask: Task<Void, Never>?

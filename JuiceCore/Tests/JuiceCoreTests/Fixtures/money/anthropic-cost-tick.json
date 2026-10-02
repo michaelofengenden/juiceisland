@@ -1,0 +1,4 @@
+{"data":[
+ {"starting_at":"2026-09-23T00:00:00Z","ending_at":"2026-09-24T00:00:00Z","results":[{"currency":"USD","amount":"10000"}]},
+ {"starting_at":"2026-09-24T00:00:00Z","ending_at":"2026-09-25T00:00:00Z","results":[{"currency":"USD","amount":"7100"}]}
+],"has_more":false,"next_page":null}

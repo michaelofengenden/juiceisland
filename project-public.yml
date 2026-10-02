@@ -1,0 +1,160 @@
+name: Juice
+
+# The public flavor (P820 to P829): the same app as project.yml's, from the same sources, named Juice, with a bundle id
+# and App Group of its own, Sparkle 2 as its updater (PublicApp/SparkleFeed.swift), the hardened runtime, and no team
+# committed. Build it with `zsh scripts/build-app.sh --public` (scripts/build-public.sh), which resolves the JI_ settings
+# below with scripts/public-settings.sh (the untracked Signing.local.xcconfig and PUBLIC_REPO) and passes them on
+# xcodebuild's command line; the values here are only what an ad hoc build gets. project.yml never names Sparkle, so the
+# private app never links it (guardrail check 8).
+#
+# The app target is PublicApp/ (its main.swift hands JuiceIslandApp the Sparkle updater) plus project.yml's app icon;
+# everything it draws is the SwiftPM library JuiceIslandUI, as in the private app. Info.plist says `JIFlavor: public`,
+# which `AppFlavor` reads: the product's name in every text, its own folders and log, and its own bundle id counted as
+# the release build. Sparkle checks https://github.com/<PUBLIC_REPO>/releases/latest/download/appcast.xml once a day and
+# on Check now, verifies each download against the EdDSA key, downloads nothing before the click, and shows no window of
+# its own.
+
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGN_IDENTITY: ""
+    CURRENT_PROJECT_VERSION: 1
+    # build-public.sh sets both: the VERSION file's version and the commit count.
+    MARKETING_VERSION: 0.1.0
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    # Only the entitlements below: no get-task-allow, which a notarized app may not carry (P822).
+    CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+    # Overridden by scripts/build-public.sh (public-settings.sh); referenced only by the two targets below. The public
+    # repository is named only there (P850): a build without that script has no feed and no source link.
+    JI_BUNDLE_ID: io.github.michaelofengenden.juice
+    JI_APP_GROUP: $(JI_BUNDLE_ID)
+    JI_PUBLIC_REPO: ""
+    JI_SPARKLE_PUBLIC_KEY: ""
+
+packages:
+  JuiceIsland:
+    path: .
+  JuiceCore:
+    path: JuiceCore
+  # MIT. A binary framework; its XPC services are left out of the app (build-public.sh), as a non-sandboxed app never
+  # uses them.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
+
+targets:
+  Juice:
+    type: application
+    platform: macOS
+    sources:
+      - path: PublicApp
+      - path: App/Main/Resources
+    dependencies:
+      - package: JuiceIsland
+        product: JuiceIslandUI
+      - package: JuiceIsland
+        product: IslandEngine
+      - package: JuiceCore
+        product: JuiceCore
+      - package: Sparkle
+        product: Sparkle
+      - target: JuiceWidget
+        embed: true
+    info:
+      path: output/Juice-Info.plist
+      properties:
+        CFBundleName: Juice
+        CFBundleDisplayName: Juice
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "26.0"
+        LSUIElement: false
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSAppleEventsUsageDescription: Juice brings a session's own terminal tab forward when you jump to it.
+        NSPrincipalClass: NSApplication
+        CFBundleURLTypes:
+          - CFBundleURLName: $(JI_BUNDLE_ID)
+            CFBundleURLSchemes:
+              - $(JI_BUNDLE_ID)
+        JIAppGroup: $(JI_APP_GROUP)
+        JIURLScheme: $(JI_BUNDLE_ID)
+        JIFlavor: public
+        JIProductName: Juice
+        JIPublicRepo: $(JI_PUBLIC_REPO)
+        # Sparkle: the feed and its key; a check once a day with no question first; nothing downloaded or installed
+        # before the click; no system profile sent; the download's EdDSA signature checked before it is unpacked.
+        SUFeedURL: https://github.com/$(JI_PUBLIC_REPO)/releases/latest/download/appcast.xml
+        SUPublicEDKey: $(JI_SPARKLE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUAutomaticallyUpdate: false
+        SUAllowsAutomaticUpdates: false
+        SUEnableSystemProfiling: false
+        SUVerifyUpdateBeforeExtraction: true
+    entitlements:
+      path: output/Juice.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(JI_APP_GROUP)
+        # The hardened runtime blocks Apple Events without it: exact jumps and Open in drive the terminal with AppleScript.
+        com.apple.security.automation.apple-events: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(JI_BUNDLE_ID)
+        PRODUCT_NAME: Juice
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # The desktop and Notification Center widget, as project.yml's: sandboxed, reading only the App Group's snapshot.
+  JuiceWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Widget
+    dependencies:
+      - package: JuiceIsland
+        product: JuiceIslandUI
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: output/JuiceWidget-Info.plist
+      properties:
+        CFBundleName: JuiceWidget
+        CFBundleDisplayName: Juice
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "26.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        JIAppGroup: $(JI_APP_GROUP)
+        JIURLScheme: $(JI_BUNDLE_ID)
+        JIFlavor: public
+        JIProductName: Juice
+    entitlements:
+      path: output/JuiceWidget.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(JI_APP_GROUP)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(JI_BUNDLE_ID).widget
+        PRODUCT_NAME: JuiceWidget
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+schemes:
+  Juice:
+    build:
+      targets:
+        Juice: all

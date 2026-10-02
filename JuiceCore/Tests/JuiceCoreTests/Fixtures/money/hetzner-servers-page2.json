@@ -1,0 +1,6 @@
+{"servers":[
+ {"id":4,"name":"worker-1","status":"running","created":"2026-09-20T00:00:00+00:00","backup_window":null,
+  "datacenter":{"name":"hel1-dc2","location":{"name":"hel1"}},
+  "server_type":{"name":"ccx23","prices":[
+    {"location":"hel1","price_hourly":{"net":"0.0503000000","gross":"0.0598570000"},"price_monthly":{"net":"31.3700000000","gross":"37.3303000000"}}]}}
+],"meta":{"pagination":{"page":2,"per_page":50,"previous_page":1,"next_page":null,"last_page":2,"total_entries":4}}}

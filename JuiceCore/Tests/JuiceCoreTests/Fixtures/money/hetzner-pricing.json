@@ -1,0 +1,9 @@
+{"pricing":{"currency":"EUR","vat_rate":"19.00",
+ "image":{"price_per_gb_month":{"net":"0.0119000000","gross":"0.0141610000"}},
+ "volume":{"price_per_gb_month":{"net":"0.0440000000","gross":"0.0523600000"}},
+ "server_backup":{"percentage":"20.0000000000"},
+ "primary_ips":[
+   {"type":"ipv4","prices":[{"location":"fsn1","price_hourly":{"net":"0.0008000000","gross":"0.0009520000"},"price_monthly":{"net":"0.5000000000","gross":"0.5950000000"}}]},
+   {"type":"ipv6","prices":[{"location":"fsn1","price_hourly":{"net":"0.0000000000","gross":"0"},"price_monthly":{"net":"0.0000000000","gross":"0"}}]}],
+ "floating_ips":[{"type":"ipv4","prices":[{"location":"fsn1","price_monthly":{"net":"3.0000000000","gross":"3.5700000000"}}]}],
+ "server_types":[]}}

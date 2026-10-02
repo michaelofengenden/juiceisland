@@ -1,0 +1,27 @@
+--- a/ActiveAgentProcessDiscovery.swift
++++ b/ActiveAgentProcessDiscovery.swift
+@@ -354,7 +354,11 @@
+     }
+ 
+     private func bestCodexTranscriptPath(in lsofOutput: String) -> String? {
+-        let paths = allMatchingPaths(in: lsofOutput, containing: "/.codex/sessions/", suffix: ".jsonl")
++        // Juice Island: every profile's sessions folder, not only ~/.codex (AgentProfileRoots); a chat's rollout, not
++        // the newer one of its reviewer or a subagent it holds open beside it (P212).
++        let paths = CodexRolloutKinds.chatPaths(AgentProfileRoots.uniquePaths(AgentProfileRoots.codexSessionFragments.flatMap {
++            allMatchingPaths(in: lsofOutput, containing: $0, suffix: ".jsonl")
++        }))
+         guard !paths.isEmpty else {
+             return nil
+         }
+@@ -421,7 +425,10 @@
+     }
+ 
+     private func bestClaudeTranscriptPath(in lsofOutput: String, workingDirectory: String?) -> String? {
+-        let paths = allMatchingPaths(in: lsofOutput, containing: "/.claude/projects/", suffix: ".jsonl")
++        // Juice Island: every profile's projects folder, not only ~/.claude (AgentProfileRoots).
++        let paths = AgentProfileRoots.uniquePaths(AgentProfileRoots.claudeProjectFragments.flatMap {
++            allMatchingPaths(in: lsofOutput, containing: $0, suffix: ".jsonl")
++        })
+         guard !paths.isEmpty else {
+             return nil
+         }

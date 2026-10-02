@@ -1,0 +1,148 @@
+import SwiftUI
+import WidgetKit
+
+/// The desktop and Notification Center widget (spec §4.7), in its extension (`Widget/`, the Xcode target
+/// `JuiceIslandWidget`). It reads the App Group's snapshot and nothing else: no socket, no engine, no network, no file
+/// outside the container. A timeline is the snapshot now, and the same snapshot again at each used-up battery's refill,
+/// so it flips to "due" with no reload (P347); the app asks for a reload when the snapshot changes (`WidgetFeed`).
+public struct JuiceIslandWidget: Widget {
+    public static let kind = "JuiceIslandWidget"
+
+    public init() {}
+
+    public var body: some WidgetConfiguration {
+        StaticConfiguration(kind: Self.kind, provider: IslandWidgetProvider()) { entry in
+            IslandWidgetEntryView(entry: entry)
+        }
+        .configurationDisplayName(Product.name)
+        .description("What needs you, what runs, and what is left.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct IslandWidgetEntry: TimelineEntry {
+    var date: Date
+    var snapshot: WidgetSnapshot?
+    var scheme: String?
+}
+
+struct IslandWidgetProvider: TimelineProvider {
+    /// The widget's own bundle names the group and the scheme (`JIAppGroup`, `JIURLScheme`).
+    private var identity: WidgetIdentity? { .main }
+
+    func placeholder(in context: Context) -> IslandWidgetEntry {
+        IslandWidgetEntry(date: Date(), snapshot: .preview(at: Date()), scheme: nil)
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping @Sendable (IslandWidgetEntry) -> Void) {
+        let now = Date()
+        // The gallery shows the real rows once the app wrote them, else the fictional preview.
+        let snapshot = read() ?? (context.isPreview ? .preview(at: now) : nil)
+        completion(IslandWidgetEntry(date: now, snapshot: snapshot, scheme: identity?.scheme))
+    }
+
+    func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<IslandWidgetEntry>) -> Void) {
+        completion(Self.timeline(read(), scheme: identity?.scheme, now: Date()))
+    }
+
+    /// The entries for `snapshot`: now, then each refill still ahead. `.never`: only the app's reload brings the next.
+    static func timeline(_ snapshot: WidgetSnapshot?, scheme: String?, now: Date) -> Timeline<IslandWidgetEntry> {
+        let dates = [now] + (snapshot?.refills(after: now) ?? [])
+        return Timeline(entries: dates.map { IslandWidgetEntry(date: $0, snapshot: snapshot, scheme: scheme) }, policy: .never)
+    }
+
+    private func read() -> WidgetSnapshot? {
+        guard let identity else { return nil }
+        return WidgetStore.appGroup(identity.appGroup)?.read()
+    }
+}
+
+/// One entry in its family and look: the snapshot's theme behind it (`WidgetBackground`: the island's pure black, or
+/// Glass), taken away by the system in the desktop's tinted, clear or vibrant look, where the view draws in one colour,
+/// the same in either theme (P346, P542). A tap outside the rows (the small face: anywhere) opens the first row, or the
+/// island (`WidgetLink.open`).
+struct IslandWidgetEntryView: View {
+    let entry: IslandWidgetEntry
+    @Environment(\.widgetFamily) private var family
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    var body: some View {
+        // The content's size, inside the margins the system gives this family where it shows.
+        GeometryReader { proxy in
+            IslandWidgetView(snapshot: entry.snapshot, face: Self.face(family), size: proxy.size, date: entry.date,
+                             tinted: renderingMode != .fullColor, scheme: entry.scheme)
+        }
+        .containerBackground(for: .widget) { WidgetBackground() }
+        .widgetURL(entry.scheme.flatMap { Self.tapLink(entry.snapshot, face: Self.face(family)).url(scheme: $0) })
+        // Glass in full colour is the island's light glass (`WidgetGlassBody`): its ink the light look's twins. Solid in
+        // full colour takes a pinned Appearance, its ground and its ink together (P777).
+        .modifier(WidgetInkScheme(scheme: Self.inkScheme(entry.snapshot, renderingMode)))
+        // The theme the app wrote (P525), outermost so the container's background sees it too: Black for an older file.
+        .environment(\.juiceTheme, entry.snapshot?.juiceTheme ?? .black)
+    }
+
+    /// Whether the content draws in the light scheme: Glass in full colour only (the system's looks draw one colour);
+    /// Solid's content takes the widget's own look, or the Appearance the app pins (`inkScheme`).
+    static func lightInk(_ theme: JuiceTheme, _ mode: WidgetRenderingMode) -> Bool { theme == .glass && mode == .fullColor }
+
+    /// The colour scheme the widget draws in, or nil for the widget's own (macOS's): Glass's light look in full colour;
+    /// Solid's pinned Appearance in full colour (Light or Dark; System is the widget's own); nothing else.
+    static func inkScheme(_ snapshot: WidgetSnapshot?, _ mode: WidgetRenderingMode) -> ColorScheme? {
+        let theme = snapshot?.juiceTheme ?? .black
+        if lightInk(theme, mode) { return .light }
+        guard theme == .solid, mode == .fullColor else { return nil }
+        return switch snapshot?.appearanceChoice ?? .system {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    static func face(_ family: WidgetFamily) -> WidgetFace {
+        switch family {
+        case .systemSmall: .small
+        case .systemLarge, .systemExtraLarge: .large
+        default: .medium
+        }
+    }
+
+    /// Where a tap that hits no row goes: on the small face (one tap target) its first row, else the island.
+    static func tapLink(_ snapshot: WidgetSnapshot?, face: WidgetFace) -> WidgetLink {
+        guard face == .small, let snapshot, snapshot.appRunning, let first = snapshot.rows.first else { return .open }
+        return .session(first.id)
+    }
+}
+
+extension WidgetSnapshot {
+    /// The gallery's preview and the placeholder: fictional sessions (spec §4.6), a request, a question, two runs, and
+    /// batteries of every kind.
+    static func preview(at date: Date) -> WidgetSnapshot {
+        WidgetSnapshot(
+            written: date, appRunning: true,
+            rows: [
+                Row(id: "preview-approval", agent: "claude", kind: .needsYou, title: "Tidy the release notes", glyph: "bang",
+                    word: "Needs approval", detail: "Bash"),
+                Row(id: "preview-question", agent: "codex", kind: .needsYou, title: "Pick a chart", glyph: "ques",
+                    word: "Question", detail: nil),
+                Row(id: "preview-run-1", agent: "claude", kind: .running, title: "Name the app", glyph: "eq"),
+                Row(id: "preview-run-2", agent: "codex", kind: .running, title: "Fix the flaky test", glyph: "eq"),
+            ],
+            more: 0,
+            claude: [Battery(state: .available(left: 82, low: false), isNext: true), Battery(state: .available(left: 64, low: false), isNext: false),
+                     Battery(state: .available(left: 11, low: true), isNext: false), Battery(state: .usedUp(refill: date.addingTimeInterval(4_500)), isNext: false),
+                     Battery(state: .available(left: 97, low: false), isNext: false), Battery(state: .signIn, isNext: false)],
+            codex: [Battery(state: .available(left: 71, low: false), isNext: true), Battery(state: .available(left: 45, low: false), isNext: false),
+                    Battery(state: .stale(last: 30), isNext: false), Battery(state: .available(left: 100, low: false), isNext: false),
+                    Battery(state: .signIn, isNext: false)],
+            glyphStyle: GlyphStyle.pixel.rawValue, glyphColour: GlyphColourMode.byState.rawValue)
+    }
+}
+
+/// The widget's content in the light scheme where it sits on Glass's light veil; untouched otherwise.
+struct WidgetInkScheme: ViewModifier {
+    let scheme: ColorScheme?
+
+    func body(content: Content) -> some View {
+        if let scheme { content.environment(\.colorScheme, scheme) } else { content }
+    }
+}

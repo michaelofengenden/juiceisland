@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "instances_found": 2,
+  "total_instances": 3,
+  "label_counts": {"fictional run": 1, "": 1},
+  "next_token": "eyJ2YWx1ZXMiOiB7ImlkIjogMTIzfX0=",
+  "instances": [
+    {"actual_status": "running", "dph_total": 0.412},
+    {"actual_status": "exited", "dph_total": 0.95}
+  ]
+}

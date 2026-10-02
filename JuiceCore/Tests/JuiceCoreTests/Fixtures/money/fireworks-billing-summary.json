@@ -1,0 +1,22 @@
+{
+  "lineItems": [
+    {
+      "category": "Text Completion",
+      "groupingKey": "model",
+      "groupingValue": "accounts/fireworks/models/fictional-model",
+      "quantity": 1250000,
+      "unitAmount": {"currencyCode": "USD", "units": "0", "nanos": 900000},
+      "totalCost": {"currencyCode": "USD", "units": "1", "nanos": 125000000},
+      "series": "SERVERLESS"
+    },
+    {
+      "category": "Dedicated Deployment",
+      "groupingKey": "deployment",
+      "groupingValue": "fictional-deployment",
+      "quantity": 12,
+      "unitAmount": {"currencyCode": "USD", "units": "2", "nanos": 900000000},
+      "totalCost": {"currencyCode": "USD", "units": "34", "nanos": 800000000},
+      "series": "DEDICATED_DEPLOYMENT"
+    }
+  ]
+}

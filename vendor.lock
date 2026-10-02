@@ -1,0 +1,5 @@
+# Open Island release vendored under Vendor/open-vibe-island (git subtree, --squash). Updated only by the sync routine.
+UPSTREAM_URL=https://github.com/Octane0411/open-vibe-island.git
+UPSTREAM_VERSION=1.2.1
+UPSTREAM_COMMIT=b50f87aa7d58af1478837d48909eb68baa37f9b9
+UPSTREAM_TREE=b36e66a7ecf03da1f91f7406fb23cc475c3446a8

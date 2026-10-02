@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+output/
+.DS_Store
+/renders/
+refs/*.png
+refs/tools/make-refs.log
+
+# The public flavor's local signing and feed settings (Signing.example.xcconfig says what goes in).
+Signing.local.xcconfig

@@ -1,0 +1,4 @@
+{"data":{"myself":{"clientBalance":2310.42,"currentSpendPerHr":1.84,"spendLimit":80,"pods":[
+ {"name":"trainer","costPerHr":1.39,"desiredStatus":"RUNNING","machine":{"gpuDisplayName":"RTX 4090"}},
+ {"name":"notebook","costPerHr":0.45,"desiredStatus":"RUNNING","machine":{"gpuDisplayName":"RTX A4000"}},
+ {"name":"old","costPerHr":0.2,"desiredStatus":"EXITED","machine":null}]}}}

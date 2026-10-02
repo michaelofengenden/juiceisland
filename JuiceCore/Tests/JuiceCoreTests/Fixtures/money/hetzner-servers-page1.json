@@ -1,0 +1,14 @@
+{"servers":[
+ {"id":1,"name":"web-1","status":"running","created":"2026-01-10T08:00:00+00:00","backup_window":"22-02",
+  "datacenter":{"name":"fsn1-dc14","location":{"name":"fsn1"}},
+  "server_type":{"name":"cx22","prices":[
+    {"location":"fsn1","price_hourly":{"net":"0.0060000000","gross":"0.0071400000"},"price_monthly":{"net":"3.7900000000","gross":"4.5101000000"}},
+    {"location":"nbg1","price_hourly":{"net":"0.0070000000","gross":"0.0083300000"},"price_monthly":{"net":"4.0000000000","gross":"4.7600000000"}}]}},
+ {"id":2,"name":"db-1","status":"off","created":"2026-03-01T00:00:00+00:00","backup_window":null,
+  "datacenter":{"name":"nbg1-dc3","location":{"name":"nbg1"}},
+  "server_type":{"name":"cpx31","prices":[
+    {"location":"nbg1","price_hourly":{"net":"0.0238000000","gross":"0.0283220000"},"price_monthly":{"net":"14.8600000000","gross":"17.6834000000"}}]}},
+ {"id":3,"name":"retired","status":"deleting","created":"2025-01-01T00:00:00+00:00","backup_window":null,
+  "datacenter":{"name":"fsn1-dc14","location":{"name":"fsn1"}},
+  "server_type":{"name":"cx22","prices":[{"location":"fsn1","price_hourly":{"net":"0.0060000000","gross":"0"},"price_monthly":{"net":"3.7900000000","gross":"0"}}]}}
+],"meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":2,"last_page":2,"total_entries":4}}}

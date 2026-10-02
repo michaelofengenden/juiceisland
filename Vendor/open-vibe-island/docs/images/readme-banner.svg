@@ -1,0 +1,32 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Open Island</title>
+  <desc id="desc">Open Island wordmark with the v6 Bar + Dot logo and the tagline agents in your menu bar.</desc>
+  <defs>
+    <filter id="paper-shadow" x="76" y="28" width="1048" height="304" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#0D0D0F" flood-opacity="0.14"/>
+    </filter>
+    <linearGradient id="paper" x1="120" y1="72" x2="1080" y2="288" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6EFDC"/>
+      <stop offset="1" stop-color="#E9DFC6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="360" rx="44" fill="#F1EAD9"/>
+  <rect x="1" y="1" width="1198" height="358" rx="43" stroke="#0D0D0F" stroke-opacity="0.08" stroke-width="2"/>
+
+  <g filter="url(#paper-shadow)">
+    <rect x="120" y="72" width="960" height="216" rx="32" fill="url(#paper)"/>
+    <rect x="120.5" y="72.5" width="959" height="215" rx="31.5" stroke="#0D0D0F" stroke-opacity="0.08"/>
+
+    <g transform="translate(210 136)">
+      <path d="M0 0H220V44C220 68.3005 200.301 88 176 88H44C19.6995 88 0 68.3005 0 44V0Z" fill="#0D0D0F"/>
+      <rect x="41" y="39" width="97" height="10" rx="5" fill="#F1EAD9"/>
+      <circle cx="164" cy="44" r="9" fill="#F1EAD9"/>
+    </g>
+
+    <g transform="translate(498 111)">
+      <text x="0" y="75" fill="#0D0D0F" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="76" font-weight="760">Open Island</text>
+      <text x="3" y="127" fill="#0D0D0F" fill-opacity="0.56" font-family="'SF Mono', 'JetBrains Mono', ui-monospace, monospace" font-size="25" font-weight="500">agents in your menu bar</text>
+    </g>
+  </g>
+</svg>

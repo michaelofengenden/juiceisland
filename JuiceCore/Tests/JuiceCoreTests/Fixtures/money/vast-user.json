@@ -1,0 +1,8 @@
+{
+  "id": 123456,
+  "key_id": 654321,
+  "email": "fictional@example.invalid",
+  "balance": 86.25,
+  "ssh_key": "ssh-ed25519 AAAAFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE fictional@example.invalid",
+  "sid": "FAKESESSIONID"
+}

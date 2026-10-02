@@ -1,0 +1,35 @@
+// The public flavor's local settings (scripts/public-settings.sh reads them; scripts/build-app.sh --public builds with
+// them, and scripts/release.sh releases with them). Copy this file to Signing.local.xcconfig, which git ignores, and
+// fill in what you have. Nothing here is committed: with no Signing.local.xcconfig the build is signed ad hoc, for
+// trying it on this Mac only, and its updates are off.
+//
+// Lines are KEY = value. Lines that start with // or # are notes.
+
+// Your Apple Developer team id (10 letters and digits). The App Group becomes <team>.<bundle id>.
+// DEVELOPMENT_TEAM = ABCDE12345
+
+// The certificate to sign with, by its full name as Keychain Access shows it. A "Developer ID Application" one makes a
+// release build: hardened runtime and a secure timestamp, ready to notarize. An "Apple Development" one signs for this
+// Mac only.
+// CODE_SIGN_IDENTITY = Developer ID Application: Your Name (ABCDE12345)
+
+// Sparkle's EdDSA public key, as Sparkle's generate_keys prints it (base64). Without it the build ships with updates off,
+// and Settings › About says so. The private key stays in your keychain and never goes in a file.
+// SPARKLE_PUBLIC_ED_KEY = ...
+
+// The public repository, owner/name. Its releases hold appcast.xml and the downloads. The PUBLIC_REPO environment
+// variable wins over this line; with neither, the default in scripts/public-settings.sh. README.md's links must name the
+// same repository (release.sh --check compares them), so renaming it is best done in that default.
+// PUBLIC_REPO = yourname/juice
+
+// Only when you build your own copy under another bundle id.
+// JI_PUBLIC_BUNDLE_ID = io.github.yourname.juice
+
+// Only for scripts/release.sh (docs/RELEASE.md):
+// notarytool's keychain profile, from xcrun notarytool store-credentials (default juice-notary).
+// JUICE_NOTARY_PROFILE = juice-notary
+// The keychain account of Sparkle's private key, when generate_keys was given one.
+// JUICE_SPARKLE_ACCOUNT = ...
+// The Developer ID Application identity to release with (its full name or SHA-1), when CODE_SIGN_IDENTITY above is
+// another one, such as Apple Development for builds on this Mac.
+// JUICE_RELEASE_IDENTITY = ...

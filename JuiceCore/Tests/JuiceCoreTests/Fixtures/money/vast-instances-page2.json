@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "instances_found": 1,
+  "total_instances": 3,
+  "label_counts": {},
+  "next_token": null,
+  "instances": [
+    {"actual_status": "running", "dph_total": 1.338}
+  ]
+}

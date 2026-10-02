@@ -1,0 +1,2 @@
+{"floating_ips":[{"id":30,"name":"float-1","type":"ipv4","server":null,"home_location":{"name":"fsn1"}}],
+ "meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":null,"last_page":1,"total_entries":1}}}
