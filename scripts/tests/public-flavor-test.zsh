@@ -35,8 +35,8 @@ check "exit 0" eq $rc 0
 check "ad hoc" eq "$identity" -
 check "no team" eq "$team" ""
 check "the App Group is the bundle id" eq "$app_group" io.github.michaelofengenden.juice
-check "the default repository" eq "$public_repo" michaelofengenden/juice-app
-check "the feed" eq "$feed" https://github.com/michaelofengenden/juice-app/releases/latest/download/appcast.xml
+check "the default repository" eq "$public_repo" michaelofengenden/juiceisland
+check "the feed" eq "$feed" https://github.com/michaelofengenden/juiceisland/releases/latest/download/appcast.xml
 check "no key: updates off" eq "$sparkle_key" ""
 check "not a release" eq "$release" 0
 
@@ -81,7 +81,7 @@ run env -u PUBLIC_REPO JI_SIGNING_FILE="$W/repo-only.xcconfig" zsh "$S/public-se
 check "a team with no identity is not its business" eq $rc 0
 check "only the name" eq "$out" "public_repo=someone/juice"
 run env -u PUBLIC_REPO JI_SIGNING_FILE="$W/none.xcconfig" zsh "$S/public-settings.sh" --repo
-check "the default" eq "$out" "public_repo=michaelofengenden/juice-app"
+check "the default" eq "$out" "public_repo=michaelofengenden/juiceisland"
 run env PUBLIC_REPO=a/b/c JI_SIGNING_FILE="$W/none.xcconfig" zsh "$S/public-settings.sh" --repo
 check "a name that is not owner/name is still refused" eq $rc 1
 run zsh "$S/public-settings.sh" --bogus

@@ -12,7 +12,7 @@ import Testing
 struct PublicFlavorTests {
     static let publicID = "io.github.michaelofengenden.juice"
     static let publicInfo: [String: Any] = ["JIFlavor": "public", "CFBundleIdentifier": publicID, "JIProductName": "Juice",
-                                            "JIPublicRepo": "michaelofengenden/juice-app"]
+                                            "JIPublicRepo": "michaelofengenden/juiceisland"]
     static let publicFlavor = AppFlavor(info: publicInfo)
 
     // MARK: Flavor settings (P820)
@@ -34,7 +34,7 @@ struct PublicFlavorTests {
         #expect(flavor.isPublic && flavor.productName == "Juice" && flavor.bundleIdentifier == Self.publicID)
         #expect(flavor.dataFolderName == Self.publicID && flavor.supportFolderName == Self.publicID)
         #expect(flavor.logsFolderName == Self.publicID && flavor.logSubsystem == Self.publicID)
-        #expect(flavor.sourceURL?.absoluteString == "https://github.com/michaelofengenden/juice-app")
+        #expect(flavor.sourceURL?.absoluteString == "https://github.com/michaelofengenden/juiceisland")
         // Never the private app's folders or log.
         for name in [flavor.dataFolderName, flavor.supportFolderName, flavor.logsFolderName, flavor.logSubsystem] {
             #expect(!["Juice", "Juice Island", "com.ofengenden.juice"].contains(name))

@@ -16,7 +16,7 @@ Juice is a small macOS app for people who run Claude Code and Codex. It shows ho
 
 ## Download
 
-Get `Juice-<version>.dmg` from the [latest release](https://github.com/michaelofengenden/juice-app/releases/latest). It is signed and notarized. Open it, drag Juice to Applications, and open it from there. Juice checks the same page for updates once a day, and installs one only when you click.
+Get `Juice-<version>.dmg` from the [latest release](https://github.com/michaelofengenden/juiceisland/releases/latest). It is signed and notarized. Open it, drag Juice to Applications, and open it from there. Juice checks the same page for updates once a day, and installs one only when you click.
 
 Juice needs macOS 26 or later, on Apple silicon or Intel. It is tested on macOS 27.
 
@@ -44,8 +44,8 @@ Everything stays on your Mac. Juice has no server, no account and no analytics.
 You need macOS 26 or later, Xcode 27, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`), git and zsh. For batteries, Claude Code or Codex installed and signed in.
 
 ```sh
-git clone https://github.com/michaelofengenden/juice-app.git
-cd juice-app
+git clone https://github.com/michaelofengenden/juiceisland.git
+cd juiceisland
 zsh scripts/build-app.sh --public
 ```
 

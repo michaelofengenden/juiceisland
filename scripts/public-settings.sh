@@ -2,7 +2,7 @@
 # The public flavor's settings (P821, P822), resolved once for scripts/build-public.sh and any script that ships what it
 # builds. Prints one shell assignment per line, quoted for eval:
 #   public_repo  owner/name of the public repository: $PUBLIC_REPO, else the local file's PUBLIC_REPO, else
-#                michaelofengenden/juice-app (the one default every script that needs it shares)
+#                michaelofengenden/juiceisland (the one default every script that needs it shares)
 #   feed         https://github.com/<public_repo>/releases/latest/download/appcast.xml, the only place Sparkle checks
 #   bundle_id    io.github.michaelofengenden.juice, or the local file's JI_PUBLIC_BUNDLE_ID (someone building their own copy)
 #   team         the local file's DEVELOPMENT_TEAM; empty for an ad hoc build
@@ -30,7 +30,7 @@ case ${1-} in
   (*) print -u2 "usage: public-settings.sh [--repo]"; exit 2 ;;
 esac
 file=${JI_SIGNING_FILE:-$root/Signing.local.xcconfig}
-default_repo=michaelofengenden/juice-app
+default_repo=michaelofengenden/juiceisland
 default_bundle_id=io.github.michaelofengenden.juice
 
 typeset -A local_values
