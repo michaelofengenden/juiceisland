@@ -48,13 +48,16 @@ public final class SessionEngine {
         /// Where the rows' small labels (model, effort, mode) are kept across a relaunch (P445); nil keeps none. Only
         /// `.live`, the app's own engine, names the real file.
         public var sessionLabels: SessionLabelStore?
+        /// Open Island's socket, which hooks installed before Juice's own helper still dial: relayed to the bridge while
+        /// they exist and nobody else holds it (`LegacyBridgeRelay`, P911). nil relays nothing; only `.live` names it.
+        public var legacyBridgeURL: URL?
 
         public init(socketURL: URL = BridgeSocketLocation.defaultURL, startBridge: Bool = true,
                     loadRuntimeState: Bool = true,
                     suppressWhenFrontmost: Bool = true,
                     excludedWorkingDirectories: [String] = [SessionEngine.juiceReadDirectory],
                     hookNotesSocketURL: URL? = nil, watchesBridgeSockets: Bool = false, hookRequestsSocketURL: URL? = nil,
-                    sessionLabels: SessionLabelStore? = nil) {
+                    sessionLabels: SessionLabelStore? = nil, legacyBridgeURL: URL? = nil) {
             self.socketURL = socketURL
             self.startBridge = startBridge
             self.loadRuntimeState = loadRuntimeState
@@ -64,15 +67,24 @@ public final class SessionEngine {
             self.watchesBridgeSockets = watchesBridgeSockets
             self.hookRequestsSocketURL = hookRequestsSocketURL
             self.sessionLabels = sessionLabels
+            self.legacyBridgeURL = legacyBridgeURL
         }
 
         public static let headless = Configuration(startBridge: false, loadRuntimeState: false)
-        /// The app's engine: the bridge on Open Island's socket, watched, the context notes and the request broker on
-        /// the app's own sockets.
+        /// The app's engine: the bridge, the context notes and the request broker on its own home's sockets (`HookHome`,
+        /// P900), watched, and Open Island's socket relayed while older hooks dial it (P911).
         public static var live: Configuration {
-            Configuration(hookNotesSocketURL: HookNoteSocket.defaultURL, watchesBridgeSockets: true,
-                          hookRequestsSocketURL: HookRequestSocket.defaultURL, sessionLabels: .app)
+            let home = HookHome.current
+            return Configuration(socketURL: home.bridgeURL, hookNotesSocketURL: home.notesURL, watchesBridgeSockets: true,
+                                 hookRequestsSocketURL: home.requestsURL, sessionLabels: .app,
+                                 legacyBridgeURL: BridgeSocketLocation.defaultURL)
         }
+
+        /// Open Island's own socket path; tests name a scratch path in its place.
+        var openIslandSocketURL = BridgeSocketLocation.defaultURL
+
+        /// The bridge is on a socket of the app's own, not Open Island's (P900).
+        var ownsSocket: Bool { socketURL.standardizedFileURL != openIslandSocketURL.standardizedFileURL }
     }
 
     struct Dependencies: Sendable {
@@ -86,6 +98,9 @@ public final class SessionEngine {
         var frontmostBundleID: @MainActor @Sendable () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
         var updateProcessRoots: @Sendable ([ProfileHookTarget]) -> Void = { AgentProfileRoots.update(targets: $0) }
         var isOtherIslandRunning: @Sendable () -> Bool = { SingleIslandGuard.otherIslandIsRunning() }
+        /// Whether anything of Juice's still dials Open Island's socket, given the profile folders (`LegacyBridgeUse`,
+        /// P911, P932).
+        var legacyRelayWanted: @Sendable ([ProfileHookTarget]) -> Bool = { LegacyBridgeUse.wanted(targets: $0) }
         /// nil probes the socket with connect(2) (`HookSocketProbe`): at the start, and a lost path's new file.
         var socketHasOwner: (@Sendable (URL) -> Bool)?
         /// Which file a socket path is (`lstat`), to notice one unlinked or bound again.
@@ -252,6 +267,8 @@ public final class SessionEngine {
     /// shown (P350).
     @ObservationIgnored var islandShownRequest: String?
     @ObservationIgnored var subagentHoldsSeen: Set<String> = []
+    /// The requests whose cards the window shows now (`windowShows(requestIDs:)`, P1050).
+    @ObservationIgnored var windowShownRequests: Set<String> = []
     /// Prompts Claude built as a subagent's hold ended, by request id, until their notice comes or can no longer come
     /// (P352).
     @ObservationIgnored var releasedHoldPrompts: [String: ReleasedHoldPrompt] = [:]
@@ -312,6 +329,8 @@ public final class SessionEngine {
     var archived: [String: Date] = [:]
     /// The model, effort and mode each session last reported, kept across a relaunch (P445); read once at the start.
     @ObservationIgnored var labelBook = SessionLabelBook(now: .distantPast)
+    /// Each session's agent as its hooks' notes named it, where that is not its tool's (P913).
+    var agentLabels: [String: AgentKind] = [:]
     @ObservationIgnored var labelsLoaded = false
     /// Claude title reads: the one in flight per session, whether another was asked for meanwhile, and when the last
     /// began.
@@ -357,6 +376,9 @@ public final class SessionEngine {
     @ObservationIgnored var socketFolderSettle: Task<Void, Never>?
     @ObservationIgnored var socketRetryTask: Task<Void, Never>?
     @ObservationIgnored var legacySocketLossNoted = false
+    /// Open Island's socket, relayed to the bridge while older hooks dial it (P911).
+    @ObservationIgnored var legacyRelay: LegacyBridgeRelay?
+    @ObservationIgnored var legacyRelayCheck: Task<Void, Never>?
 
     public convenience init(configuration: Configuration = .live) {
         self.init(configuration: configuration, dependencies: Dependencies())
@@ -703,6 +725,10 @@ public final class SessionEngine {
         let now = dependencies.now()
         state = lifecycle.review(old: state, new: newState, now: now, waitsOnYou: needsAttention) { session in
             (session.tool == .claudeCode || session.tool == .codex) && !session.isCodexAppSession && !session.id.hasPrefix(prefix)
+                // Amp's threads and Kilo's sessions too: the monitor finds only `opencode` processes, never `amp` or
+                // `kilo`, so OpenCode's rule would end one a minute or two after its last event and drop what came next
+                // (P1168, P1175).
+                || (session.tool == .openCode && AgentKind.fromSessionID(session.id).map { $0 == .amp || $0 == .kilo } == true)
         }
         // A session the pass ended or dropped waits on nothing; an agent that crashed sends no SessionEnd (C11).
         for sessionID in attention.sessionIDs where state.session(id: sessionID).map(\.isSessionEnded) ?? true {
@@ -810,6 +836,7 @@ public final class SessionEngine {
     ///
     /// A Codex question, and a Codex approval the old helper holds, always go out: Codex shows nothing of its own for
     /// them (the TUI counts a collapsed async question down, and a held approval waits on the island alone; C4, C15).
+    /// So does an approval Copilot CLI, Devin or Qwen Code waits on through the bridge (`waitsOnIslandAlone`, P931).
     /// A Codex app thread has no tab: the Codex app in front is its tab for its Done and for an approval the broker
     /// handed back to Codex, which shows its own prompt.
     ///
@@ -824,7 +851,7 @@ public final class SessionEngine {
             onSignal?(alert.signal)
             return
         }
-        if let request, request.tool == .codex, request.source == .rollout || request.isHeldCodexLegacy {
+        if let request, request.waitsOnIslandAlone || (request.tool == .codex && (request.source == .rollout || request.isHeldCodexLegacy)) {
             onSignal?(alert.signal)
             return
         }

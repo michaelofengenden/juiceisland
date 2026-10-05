@@ -41,6 +41,7 @@ extension SessionEngine {
     @discardableResult
     public func checkBridgeSockets() -> Task<Void, Never>? {
         guard configuration.startBridge, hasStarted, bridgeHealth != .off else { return nil }
+        checkLegacyRelay()
         if let socketCheck { return socketCheck }
         let paths = HookSocketProbe.paths(for: configuration.socketURL)
         let identity = dependencies.socketIdentity
@@ -72,6 +73,16 @@ extension SessionEngine {
     func settleBridgeSockets(lost: [URL], owned: [URL]) {
         guard bridgeHealth != .off, !lost.isEmpty else { return }
         let legacy = BridgeSocketLocation.legacyURL.path
+        // On the app's own socket, the legacy `/tmp` path goes to whichever island binds it last: no current helper dials
+        // it, so losing it is noted and left, whoever took it (P912).
+        if configuration.ownsSocket, lost.allSatisfy({ $0.path == legacy }) {
+            if !legacySocketLossNoted {
+                legacySocketLossNoted = true
+                JuiceLog.bridge.notice("the legacy hook socket in /tmp is gone; the app's own one still listens")
+            }
+            return
+        }
+        let owned = configuration.ownsSocket ? owned.filter { $0.path != legacy } : owned
         if !owned.isEmpty {
             guard bridgeHealth != .taken else { return }
             stopBridgeServer()
@@ -102,11 +113,81 @@ extension SessionEngine {
         }
         bridgeTakenBackAt = dependencies.now()
         connectObserver()
+        checkLegacyRelay()
         JuiceLog.bridge.notice("""
             the hook socket was \(wasTaken ? "let go by the app that took it" : "unlinked or left behind", privacy: .public): \
             taken back
             """)
     }
+
+    // MARK: Open Island's socket, relayed (P911)
+
+    /// Starts relaying Open Island's socket when something of Juice's still dials it, Open Island is not running and
+    /// nobody listens there; stops when another app took the path, or once nothing of Juice's dials it (Move, Remove,
+    /// P932). Off the main actor for the probe; one look at a time.
+    @discardableResult
+    func checkLegacyRelay() -> Task<Void, Never>? {
+        guard let path = configuration.legacyBridgeURL, configuration.ownsSocket, bridgeServer != nil else { return nil }
+        if let legacyRelayCheck { return legacyRelayCheck }
+        let relay = legacyRelay
+        let target = configuration.socketURL
+        let targets = profileTargets
+        let isWanted = dependencies.legacyRelayWanted
+        let wanted: @Sendable () -> Bool = { isWanted(targets) }
+        let otherIsland = dependencies.isOtherIslandRunning
+        let identity = dependencies.socketIdentity
+        let hasOwner = dependencies.socketHasOwner ?? { HookSocketProbe.probe($0).hasOwner }
+        let check = Task { [weak self] in
+            enum Step { case keep, stop, unwanted, start, startAfterStop }
+            let step = await Task.detached(priority: .utility) { () -> Step in
+                if let relay {
+                    // Ours while the file is the one it bound, and only while something of Juice's dials it; another
+                    // app's once it bound its own.
+                    guard identity(path) != relay.identity else { return wanted() ? .keep : .unwanted }
+                    return wanted() && !otherIsland() && !hasOwner(path) ? .startAfterStop : .stop
+                }
+                return wanted() && !otherIsland() && !hasOwner(path) ? .start : .keep
+            }.value
+            guard let self else { return }
+            self.legacyRelayCheck = nil
+            guard self.bridgeServer != nil else { return }
+            switch step {
+            case .keep:
+                break
+            case .stop:
+                self.stopLegacyRelay()
+                JuiceLog.bridge.notice("Open Island's hook socket is another app's again; the relay stopped")
+            case .unwanted:
+                self.stopLegacyRelay()
+                JuiceLog.bridge.notice("nothing of ours dials Open Island's hook socket now; the relay stopped")
+            case .start, .startAfterStop:
+                self.stopLegacyRelay()
+                do {
+                    self.legacyRelay = try LegacyBridgeRelay(path: path, target: target)
+                    JuiceLog.bridge.notice("older hooks reach the app through Open Island's socket")
+                } catch {
+                    JuiceLog.bridge.error("Open Island's hook socket could not be relayed: \(Self.logReason(error), privacy: .public)")
+                }
+            }
+        }
+        legacyRelayCheck = check
+        return check
+    }
+
+    func stopLegacyRelay() {
+        legacyRelayCheck?.cancel()
+        legacyRelayCheck = nil
+        legacyRelay?.stop()
+        legacyRelay = nil
+    }
+
+    /// Whether Open Island's socket is relayed now (Diagnostics, tests).
+    public var relaysLegacySocket: Bool { legacyRelay != nil }
+
+    /// A click changed hooks (Move, Remove, an OpenCode plugin's Update): the relay looks again at whether anything of
+    /// Juice's still dials Open Island's socket (P932).
+    @discardableResult
+    public func hooksChanged() -> Task<Void, Never>? { checkLegacyRelay() }
 
     /// One more look after `socketRetry`, while a lost path waits for a session to be answered.
     func retryBridgeSocketCheck() {

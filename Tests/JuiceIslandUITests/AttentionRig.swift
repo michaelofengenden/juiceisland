@@ -22,6 +22,11 @@ final class AttentionRig {
     let notesURL: URL
     let requestsURL: URL
     let home: URL
+    /// The helper's home when the rig runs helpers installed as the app installs them (`helperHome`): the engine listens
+    /// on its sockets, and helpers get no socket variables, so each finds them from its own path (P900).
+    let hookHome: HookHome?
+    /// The scratch path the engine relays as Open Island's socket (`legacyRelay`).
+    let legacyURL: URL?
     /// The engine's clock is `base` plus `offset`: it moves only when the test moves it on past windows and holds
     /// (`advance`), never with real time, so a slow run (every suite shares the main actor) never opens a window early.
     /// The helpers and the broker stamp real times, which run ahead of it; the engine opens a request at the earlier.
@@ -35,6 +40,8 @@ final class AttentionRig {
     /// Every request the broker took, whether it held it: "the helper ends at once" is a request it did not hold, never
     /// a time (P293).
     let brokered = Box<[Bool]>([])
+    /// Whether something of Juice's still dials the legacy socket, as the engine's relay asks it (P932).
+    let relayWanted: Box<Bool>
     /// Notes the engine has taken, ignored ones too: each counts once its `ingest(note:)` has run.
     let notesHeard = Box(0)
     let engine: SessionEngine
@@ -50,16 +57,25 @@ final class AttentionRig {
     /// `subagentBackstop`: when the broker ends a subagent's hold by itself, in real seconds (P350). The engine's own end
     /// runs on the rig's clock, which moves only with `advance`, so a rig keeps the broker's out of the way (ten minutes)
     /// unless a test is about it: a loaded machine never ends a hold under a test that did not move the clock.
-    init(broker: Bool = true, suppress: Bool = false, realBridge: Bool = false, subagentBackstop: TimeInterval = 600) async throws {
+    /// `helperHome`: the sockets are a `HookHome`'s in the scratch folder, as the app's are its own home's.
+    /// `legacyRelay`: the engine relays `legacyURL`, a scratch path standing in for Open Island's socket, to its bridge
+    /// (P911).
+    init(broker: Bool = true, suppress: Bool = false, realBridge: Bool = false, subagentBackstop: TimeInterval = 600,
+         helperHome: Bool = false, legacyRelay: Bool = false) async throws {
         folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("jie-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        bridgeURL = folder.appendingPathComponent("b.sock")
-        notesURL = folder.appendingPathComponent("n.sock")
-        requestsURL = folder.appendingPathComponent("r.sock")
+        let hookHome = helperHome ? HookHome(folder: folder.appendingPathComponent("h", isDirectory: true)) : nil
+        if let hookHome { try FileManager.default.createDirectory(at: hookHome.folder, withIntermediateDirectories: true) }
+        self.hookHome = hookHome
+        bridgeURL = hookHome?.bridgeURL ?? folder.appendingPathComponent("b.sock")
+        notesURL = hookHome?.notesURL ?? folder.appendingPathComponent("n.sock")
+        requestsURL = hookHome?.requestsURL ?? folder.appendingPathComponent("r.sock")
+        legacyURL = legacyRelay ? folder.appendingPathComponent("o.sock") : nil
         home = folder.appendingPathComponent("home", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        for url in [bridgeURL, notesURL, requestsURL] {
+        for url in [bridgeURL, notesURL, requestsURL] + (legacyURL.map { [$0] } ?? []) {
             precondition(url.path.hasPrefix(folder.path) && url.path.hasPrefix(NSTemporaryDirectory()), "scratch sockets only (P164)")
+            precondition(HookHome.fitsSocketAddress(url), "scratch socket path too long")
         }
         let offset = offset, base = base
         var configuration = SessionEngine.Configuration.headless
@@ -69,7 +85,11 @@ final class AttentionRig {
         configuration.hookRequestsSocketURL = broker ? requestsURL : nil
         configuration.suppressWhenFrontmost = suppress
         configuration.excludedWorkingDirectories = []
+        configuration.legacyBridgeURL = legacyURL
         var dependencies = SessionEngine.Dependencies()
+        let relayWanted = Box(legacyRelay)
+        self.relayWanted = relayWanted
+        dependencies.legacyRelayWanted = { _ in relayWanted.current }
         let upstream = upstream, scheduled = scheduled, front = front, frontTab = frontTab
         if !realBridge {
             dependencies.startBridge = { url in
@@ -179,8 +199,11 @@ final class AttentionRig {
 
     /// The environment a helper child gets: built from scratch, never the runner's (P168).
     func environment(entrypoint: String?) -> [String: String] {
-        var environment = ["PATH": "/usr/bin:/bin", "HOME": home.path, "OPEN_ISLAND_SOCKET_PATH": bridgeURL.path,
-                           HookNoteSocket.overrideKey: notesURL.path, HookRequestSocket.overrideKey: requestsURL.path]
+        var environment = ["PATH": "/usr/bin:/bin", "HOME": home.path]
+        if hookHome == nil {
+            environment.merge(["OPEN_ISLAND_SOCKET_PATH": bridgeURL.path, HookNoteSocket.overrideKey: notesURL.path,
+                               HookRequestSocket.overrideKey: requestsURL.path]) { own, _ in own }
+        }
         environment.merge(extraEnvironment) { own, _ in own }
         if let entrypoint { environment["CLAUDE_CODE_ENTRYPOINT"] = entrypoint }
         let forbidden = ["TERM_PROGRAM", "ITERM_SESSION_ID", "__CFBundleIdentifier"]
@@ -192,15 +215,20 @@ final class AttentionRig {
 
     /// Starts one hook: the built helper with the input on stdin. `events`: what upstream's bridge emits for it, when
     /// it reaches upstream's helper. `source` nil runs it as upstream's installer writes Codex's hooks, with no
-    /// `--source` (P290).
+    /// `--source` (P290). `command`: a hook command as an installer wrote it, run as the agent would run it (its
+    /// program and arguments) in place of the built helper and `source`.
     @discardableResult
-    func hook(_ object: [String: Any], source: String? = "claude", entrypoint: String? = "cli", events: [AgentEvent] = []) -> HelperRun {
-        if let event = object["hook_event_name"] as? String, let session = object["session_id"] as? String {
+    func hook(_ object: [String: Any], source: String? = "claude", entrypoint: String? = "cli", events: [AgentEvent] = [],
+              command: String? = nil) -> HelperRun {
+        let session = object["session_id"] as? String ?? object["conversation_id"] as? String
+        if let event = object["hook_event_name"] as? String, let session {
             if !events.isEmpty { upstream.current?.plan(event: event, session: session, events: events) }
-            notesSent += 1
+            if object["session_id"] != nil { notesSent += 1 }
         }
         let input = try! JSONSerialization.data(withJSONObject: object)
-        let run = HelperRun(input: input, source: source, environment: environment(entrypoint: entrypoint))
+        let words = command.flatMap(AgentHookTable.words)
+        let run = HelperRun(input: input, source: source, environment: environment(entrypoint: entrypoint),
+                            executable: words?.first.map { URL(fileURLWithPath: $0) }, arguments: words.map { Array($0.dropFirst()) })
         runs.append(run)
         return run
     }
@@ -210,8 +238,8 @@ final class AttentionRig {
     /// (a note an earlier hook sent late once stood in for this one's, and the test read the rows before it, P293).
     @discardableResult
     func finished(_ object: [String: Any], source: String? = "claude", entrypoint: String? = "cli", events: [AgentEvent] = [],
-                  until condition: (() -> Bool)? = nil) async -> HelperRun.Result {
-        let run = hook(object, source: source, entrypoint: entrypoint, events: events)
+                  command: String? = nil, until condition: (() -> Bool)? = nil) async -> HelperRun.Result {
+        let run = hook(object, source: source, entrypoint: entrypoint, events: events, command: command)
         let result = await run.result()
         let sent = notesSent
         await waitUntil { notesHeard.current >= sent && (condition?() ?? true) }
@@ -306,9 +334,10 @@ final class HelperRun: @unchecked Sendable {
     private let done = EngineFixtureBox<Result?>(nil)
     private let collected = EngineFixtureBox(Data())
 
-    init(input: Data, source: String?, environment: [String: String]) {
-        process.executableURL = Self.binary
-        process.arguments = source.map { ["--source", $0] } ?? []
+    /// `executable` and `arguments`, when given, run in place of the built helper and `--source <source>`.
+    init(input: Data, source: String?, environment: [String: String], executable: URL? = nil, arguments: [String]? = nil) {
+        process.executableURL = executable ?? Self.binary
+        process.arguments = arguments ?? source.map { ["--source", $0] } ?? []
         process.environment = environment
         let stdin = Pipe()
         process.standardInput = stdin
@@ -368,7 +397,7 @@ final class UpstreamStandIn: EngineBridge, @unchecked Sendable {
     /// is reused at once), so ending one early is a `shutdown`.
     private var clients: Set<Int32> = []
     private var plans: [String: [[AgentEvent]]] = [:]
-    private var held: [String: (fd: Int32, claude: ClaudeHookPayload?, codex: CodexHookPayload?)] = [:]
+    private var held: [String: (fd: Int32, claude: ClaudeHookPayload?, codex: CodexHookPayload?, openCode: Bool)] = [:]
     private var received: [Received] = []
     private var emitted = 0
     private var stopped = false
@@ -485,24 +514,54 @@ final class UpstreamStandIn: EngineBridge, @unchecked Sendable {
             lock.withLock { observers.append(client) }
             respond(.acknowledged, to: client)
         case let .processClaudeHook(payload):
-            emit(take(payload.hookEventName.rawValue, payload.sessionID, "claude"))
+            emit(take(payload.hookEventName.rawValue, payload.sessionID, payload.hookSource ?? "claude"))
             if payload.hookEventName == .permissionRequest {
-                lock.withLock { held[payload.sessionID] = (client, payload, nil) }
+                lock.withLock { held[payload.sessionID] = (client, payload, nil, false) }
             } else {
                 respond(.acknowledged, to: client)
             }
         case let .processCodexHook(payload):
             emit(take(payload.hookEventName.rawValue, payload.sessionID, "codex"))
             if payload.hookEventName == .permissionRequest {
-                lock.withLock { held[payload.sessionID] = (client, nil, payload) }
+                lock.withLock { held[payload.sessionID] = (client, nil, payload, false) }
             } else {
                 respond(.acknowledged, to: client)
             }
+        case let .processCursorHook(payload):
+            // As upstream's `handleCursorHook`: the shell and MCP calls are allowed at once, Cursor's prompt decides.
+            emit(take(payload.hookEventName.rawValue, payload.conversationId, "cursor"))
+            switch payload.hookEventName {
+            case .beforeShellExecution, .beforeMCPExecution:
+                respond(.cursorHookDirective(CursorHookDirective(permission: .allow)), to: client)
+            default:
+                respond(.acknowledged, to: client)
+            }
+        case let .processOpenCodeHook(payload):
+            // As upstream's `handleOpenCodeHook`: a permission is held until the island's answer, the rest acknowledged.
+            emit(take(payload.hookEventName.rawValue, payload.sessionID, "opencode"))
+            if payload.hookEventName == .permissionRequest {
+                lock.withLock { held[payload.sessionID] = (client, nil, nil, true) }
+            } else {
+                respond(.acknowledged, to: client)
+            }
+        case let .processGeminiHook(payload):
+            // As upstream's `handleGeminiHook` (Gemini CLI, and Antigravity CLI in its words): told, never held.
+            emit(take(payload.hookEventName.rawValue, payload.sessionID, "gemini"))
+            respond(.acknowledged, to: client)
+        case let .processGrokHook(payload):
+            // As upstream's `handleGrokHook`: told, never held (Grok ignores verdicts).
+            emit(take(payload.hookEventName.rawValue, payload.sessionID, "grok"))
+            respond(.acknowledged, to: client)
         case let .resolvePermission(sessionID, resolution):
             // As upstream's `resolvePendingClaudeInteraction` and `resolvePendingApproval`: the decision to the held
             // helper, and the bridge's own echo to the observers.
             if let entry = lock.withLock({ held.removeValue(forKey: sessionID) }) {
-                if let claude = entry.claude {
+                if entry.openCode {
+                    switch resolution {
+                    case .allowOnce: respond(.openCodeHookDirective(.allow), to: entry.fd)
+                    case let .deny(message, _): respond(.openCodeHookDirective(.deny(reason: message)), to: entry.fd)
+                    }
+                } else if let claude = entry.claude {
                     respond(.claudeHookDirective(.permissionRequest(SessionEngine.decision(for: resolution, input: claude.toolInput))),
                             to: entry.fd)
                 } else {

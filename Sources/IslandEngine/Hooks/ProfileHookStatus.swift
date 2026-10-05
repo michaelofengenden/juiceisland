@@ -1,4 +1,5 @@
 import Foundation
+import IslandHookNotes
 import JuiceCore
 import OpenIslandCore
 import Synchronization
@@ -19,10 +20,13 @@ public struct ProfileHookStatus: Identifiable, Equatable, Sendable {
         /// A config file exists but cannot be read or decoded. Upstream's installers would treat it as empty and
         /// overwrite it, so Install and Remove refuse and nothing is written.
         case unreadable(file: String)
-        /// Vibe Island's hooks are in this file and ours are not all there. Install, Repair and Remove refuse
-        /// whenever `vibeEntryCount` is above 0, whatever the state: upstream's Claude uninstaller deletes every
-        /// `vibe-island-bridge` hook along with ours.
+        /// Vibe Island's hooks are in this file and ours are not all there. Install and Repair refuse whenever
+        /// `vibeEntryCount` is above 0, whatever the state, until Vibe Island's are removed (wave 2's Switch to Juice);
+        /// Remove takes out Juice's own entries only, so it goes ahead (P904).
         case blockedByOtherIsland(vibeEntries: Int)
+        /// The hooks still call Open Island's helper (what Juice installed before its own, P900): they work through the
+        /// old socket while nobody else holds it, and Move (Repair) puts Juice's helper in their place (P903).
+        case oldHelper(entries: Int)
         case broken([HookHealthReport.Issue])
         case notInstalled
         case partial(installed: Int, expected: Int)
@@ -39,6 +43,8 @@ public struct ProfileHookStatus: Identifiable, Equatable, Sendable {
     public let expectedEventCount: Int
     public let vibeEntryCount: Int
     public let otherHookCount: Int
+    /// Entries that run Open Island's helper with this agent's source (P903).
+    public var oldEntryCount = 0
     /// The managed helper exists and has the same bytes as the one in this app's bundle.
     public let helperMatchesBundle: Bool
     /// Codex only.
@@ -64,27 +70,21 @@ enum ProfileHookInspector {
         }
 
         let configName = hookFileName(for: target.provider)
-        let command = managedCommand(for: target, managedHelperURL: managedHelperURL, fileManager: fileManager)
-        let report: HookHealthReport
-        switch target.provider {
-        case .claude:
-            report = HookHealthCheck.checkClaude(claudeDirectory: folderURL, hooksBinaryURL: managedHelperURL,
-                                                 managedHooksBinaryURL: managedHelperURL, fileManager: fileManager)
-        case .codex:
-            report = HookHealthCheck.checkCodex(codexDirectory: folderURL, hooksBinaryURL: managedHelperURL,
-                                                managedHooksBinaryURL: managedHelperURL, fileManager: fileManager)
-        }
-
+        let owners = self.owners(for: target, managedHelperURL: managedHelperURL, oldIsOurs: true)
         let groups = hookGroups(in: folderURL.appendingPathComponent(configName))
         var positions: [String: (group: Int, hook: Int)] = [:]
         var vibe = 0
         var other = 0
+        var old = 0
         for (event, eventGroups) in groups {
             for (groupIndex, commands) in eventGroups.enumerated() {
                 for (hookIndex, entry) in commands.enumerated() {
-                    if entry == command {
+                    if owners.isOurs(entry) {
                         if positions[event] == nil { positions[event] = (groupIndex, hookIndex) }
-                    } else if entry.lowercased().contains("vibe-island") {
+                    } else if owners.isOld(entry) {
+                        old += 1
+                    } else if VibeIslandHooks.isBridge(entry) {
+                        // The same rule Switch to Juice takes out by (P955).
                         vibe += 1
                     } else {
                         other += 1
@@ -93,6 +93,12 @@ enum ProfileHookInspector {
             }
         }
         let managedCount = events.filter { positions[$0] != nil }.count
+        // Open Island's helper's entries are Juice's own older ones only where Juice wrote this profile's hooks before
+        // its own helper; anywhere else they are Open Island's, and Juice leaves them alone (P903, P932).
+        if !oldIsOurs(intent: intent, managedCount: managedCount) {
+            other += old
+            old = 0
+        }
 
         var codexFeature: Bool?
         var untrusted: [String] = []
@@ -108,13 +114,22 @@ enum ProfileHookInspector {
             }
         }
 
-        // A profile with no hooks yet has no helper to find; that is not an error.
-        let errors = report.errors.filter { !($0 == .binaryNotFound && managedCount == 0) }
+        // Juice's own helper must be there for its entries to run; a profile with none of ours needs none.
+        var errors: [HookHealthReport.Issue] = []
+        if managedCount > 0 {
+            if !fileManager.fileExists(atPath: managedHelperURL.path) {
+                errors.append(.binaryNotFound)
+            } else if !fileManager.isExecutableFile(atPath: managedHelperURL.path) {
+                errors.append(.binaryNotExecutable(path: managedHelperURL.path))
+            }
+        }
         let state: ProfileHookStatus.State
         if let problem = configProblem(for: target, fileManager: fileManager) {
             state = problem.state
         } else if vibe > 0, managedCount < events.count {
             state = .blockedByOtherIsland(vibeEntries: vibe)
+        } else if old > 0 {
+            state = .oldHelper(entries: old)
         } else if !errors.isEmpty {
             state = .broken(errors)
         } else if managedCount == 0 {
@@ -130,7 +145,38 @@ enum ProfileHookInspector {
         }
         return ProfileHookStatus(target: target, state: state, intent: intent, managedEventCount: managedCount,
                                  expectedEventCount: events.count, vibeEntryCount: vibe, otherHookCount: other,
-                                 helperMatchesBundle: helperMatches, codexFeatureEnabled: codexFeature, checkedAt: now)
+                                 oldEntryCount: old, helperMatchesBundle: helperMatches, codexFeatureEnabled: codexFeature,
+                                 checkedAt: now)
+    }
+
+    /// Which commands are Juice's in this profile (its own helper, exactly), and, with `oldIsOurs`, which are Juice's
+    /// older ones on Open Island's helper for the same agent (P903). Without it, Open Island's helper's entries are
+    /// nobody's to move or remove (P932).
+    static func owners(for target: ProfileHookTarget, managedHelperURL: URL, oldIsOurs: Bool) -> HookFileEdits.Owners {
+        let helper = managedHelperURL.path
+        let source: String? = target.provider == .claude ? "claude" : nil
+        return HookFileEdits.Owners(isOurs: { AgentHookTable.isOurs($0, source: source, helperPath: helper) },
+                                    isOld: { oldIsOurs && AgentHookTable.isOldIsland($0, source: source) })
+    }
+
+    /// Whether the entries on Open Island's helper in this profile are the ones Juice wrote before its own helper (P932).
+    /// Before, Juice's command was Open Island's helper itself, so the two cannot be told apart by the command: they are
+    /// Juice's where Juice's intent says it installed this profile's hooks and none of its own helper's are there yet.
+    /// A Mac where only Open Island set up a profile, or where Juice was connected beside Open Island since, keeps them as
+    /// Open Island's.
+    static func oldIsOurs(intent: ProfileHookIntent, managedCount: Int) -> Bool {
+        intent == .installed && managedCount == 0
+    }
+
+    /// How many of Juice's older entries (on Open Island's helper) this profile's file holds; 0 when they are Open
+    /// Island's own (P932). Reads that one file only.
+    static func oldEntryCount(for target: ProfileHookTarget, intent: ProfileHookIntent, managedHelperURL: URL) -> Int {
+        guard intent == .installed else { return 0 }
+        let url = URL(fileURLWithPath: target.folder, isDirectory: true).appendingPathComponent(hookFileName(for: target.provider))
+        let owners = owners(for: target, managedHelperURL: managedHelperURL, oldIsOurs: true)
+        let commands = hookGroups(in: url).values.flatMap { $0.flatMap { $0 } }
+        guard !commands.contains(where: owners.isOurs) else { return 0 }
+        return commands.filter(owners.isOld).count
     }
 
     /// The file that holds the hooks: settings.json (Claude) or hooks.json (Codex).
@@ -138,26 +184,19 @@ enum ProfileHookInspector {
         provider == .claude ? "settings.json" : "hooks.json"
     }
 
-    /// The command our hooks run in this profile: the one its manifest recorded, else the one Install would write.
+    /// The command Juice's hooks run in this profile: its own helper, `--source claude` for Claude and none for Codex, as
+    /// upstream's installers shape them (P290). A manifest Open Island's installer left is never read: it may name Open
+    /// Island's command (P901).
     static func managedCommand(for target: ProfileHookTarget, managedHelperURL: URL, fileManager: FileManager = .default) -> String {
-        let folderURL = URL(fileURLWithPath: target.folder, isDirectory: true)
-        switch target.provider {
-        case .claude:
-            let manager = ClaudeHookInstallationManager(claudeDirectory: folderURL, managedHooksBinaryURL: managedHelperURL,
-                                                        hookSource: "claude", fileManager: fileManager)
-            return (try? manager.status())?.manifest?.hookCommand
-                ?? ClaudeHookInstaller.hookCommand(for: managedHelperURL.path, source: "claude")
-        case .codex:
-            let manager = CodexHookInstallationManager(codexDirectory: folderURL, managedHooksBinaryURL: managedHelperURL,
-                                                       fileManager: fileManager, featureKeyProvider: { .current })
-            return (try? manager.status())?.manifest?.hookCommand ?? CodexHookInstaller.hookCommand(for: managedHelperURL.path)
-        }
+        let quoted = AgentHookTable.shellQuote(managedHelperURL.path)
+        return target.provider == .claude ? "\(quoted) --source claude" : quoted
     }
 
     /// One drift reading of this profile's settings.json or hooks.json (`HookDrift.read`). A missing folder has
     /// nothing to compare and gives nil. A file that exists but cannot be read counts as being edited, like an empty
-    /// or unparsable one: no alert, and Setup shows `unreadable` from the inspector instead (P23, P51).
-    static func driftReading(for target: ProfileHookTarget, managedHelperURL: URL,
+    /// or unparsable one: no alert, and Setup shows `unreadable` from the inspector instead (P23, P51). A file whose
+    /// hooks still call Open Island's helper gives nil too: those hooks work, and its row says Move, not Repair (P903).
+    static func driftReading(for target: ProfileHookTarget, managedHelperURL: URL, oldIsOurs: Bool,
                              fileManager: FileManager = .default) -> HookDriftReading? {
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: target.folder, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
@@ -167,6 +206,8 @@ enum ProfileHookInspector {
             guard let contents = try? Data(contentsOf: url) else { return .beingEdited }
             data = contents
         }
+        let owners = owners(for: target, managedHelperURL: managedHelperURL, oldIsOurs: oldIsOurs)
+        if hookGroups(in: url).values.contains(where: { $0.contains { $0.contains(where: owners.isOld) } }) { return nil }
         return HookDrift.read(fileData: data,
                               command: managedCommand(for: target, managedHelperURL: managedHelperURL, fileManager: fileManager),
                               expected: ExpectedHookEntries.entries(for: target.provider))

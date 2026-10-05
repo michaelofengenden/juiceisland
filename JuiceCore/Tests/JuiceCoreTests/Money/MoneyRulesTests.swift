@@ -120,6 +120,7 @@ import Testing
         var failing = MoneySourceRecord(lastGood: reading, lastError: .offline, lastErrorAt: Self.now - 60)
         let stale = MoneyPresentation.make(source: .openRouter, record: failing, settings: MoneySourceSettings(), now: Self.now, amber: 72, red: 24)
         #expect(stale?.row.amount == nil && stale?.isReadable == false)
+        #expect(stale?.row.word == "Offline")
         #expect(stale?.row.hoverLabel == "OpenRouter · offline · last $4,120 balance · read 25m ago")
         #expect(stale?.status == "Offline")
         // A failure younger than the freshness limit keeps the figure.
@@ -129,7 +130,7 @@ import Testing
         // A key without the role: rails and the exact words.
         let role = MoneyPresentation.make(source: .anthropic, record: MoneySourceRecord(lastError: .keyNotUsable, lastErrorAt: Self.now),
                                           settings: MoneySourceSettings(), now: Self.now, amber: 72, red: 24)
-        #expect(role?.row.amount == nil && role?.status == "Not available with this key")
+        #expect(role?.row.amount == nil && role?.status == "Not available with this key" && role?.row.word == "Wrong key")
         #expect(role?.row.hoverLabel == "Anthropic · not available with this key")
         // P363: a 401 or 403 says what to do where the source tells it: OpenAI's costs need an Admin key, Hetzner a token
         // it knows. Its hover and every other source's word stay as they were.
@@ -138,6 +139,8 @@ import Testing
                                    settings: MoneySourceSettings(), now: Self.now, amber: 72, red: 24)
         }
         #expect(refused(MoneyAccount(.openAI))?.status == "Needs an Admin key (sk-admin-…)")
+        // Juice Island P1213: the panel's row says it plainly where the rails stood.
+        #expect(refused(MoneyAccount(.openAI))?.row.word == "No access")
         #expect(refused(MoneyAccount(.hetzner))?.status == "Token rejected · make a Read token")
         #expect(refused(MoneyAccount(.hetzner))?.row.hoverLabel == "Hetzner · not available with this key")
         #expect(refused(MoneyAccount(.anthropic))?.status == "Not available with this key")
@@ -158,5 +161,27 @@ import Testing
 
     private func record(_ figures: MoneyReading.Figures) -> MoneySourceRecord {
         MoneySourceRecord(lastGood: MoneyReading(source: .openRouter, readAt: Self.now - 120, figures: figures))
+    }
+
+    /// Juice Island P1213: every failure, a stale reading and a reading still to come say a word or two in the row
+    /// where the rails stood, short enough for the panel's amount column (at most 12 characters).
+    @Test func everyUnreadRowSaysAWord() {
+        let failures: [MoneyReadError] = [.keyFileRefused("x"), .keyFileUnreadable("missing"), .keyNotUsable, .notAvailableWithThisKey,
+                                        .refusedByPolicy("x"), .rateLimited(retryAfter: nil), .http(500), .timeout, .offline,
+                                        .unreadableResponse("x"), .idMissing("Team ID"), .idInvalid("Team ID")]
+        for failure in failures {
+            let row = MoneyPresentation.make(source: .openAI, record: MoneySourceRecord(lastError: failure, lastErrorAt: Self.now),
+                                             settings: MoneySourceSettings(), now: Self.now, amber: 72, red: 24)?.row
+            #expect(row?.amount == nil && row?.word == failure.rowWord, "\(failure)")
+            #expect(failure.rowWord.count <= 12 && !failure.rowWord.isEmpty, "\(failure)")
+        }
+        let reading = MoneyReading(source: .openRouter, readAt: Self.now - 1_500,
+                                   figures: .balance(OpenRouterFigures(totalCredits: 5_000, totalUsage: 880).kind))
+        let stale = MoneyPresentation.make(source: .openRouter, record: MoneySourceRecord(lastGood: reading), settings: MoneySourceSettings(),
+                                           now: Self.now, amber: 72, red: 24)
+        #expect(stale?.row.amount == nil && stale?.row.word == "Stale")
+        let fresh = MoneyPresentation.make(source: .openRouter, record: MoneySourceRecord(lastGood: MoneyReading(source: .openRouter, readAt: Self.now - 60, figures: reading.figures)),
+                                           settings: MoneySourceSettings(), now: Self.now, amber: 72, red: 24)
+        #expect(fresh?.row.amount == "$4,120" && fresh?.row.word == nil)
     }
 }

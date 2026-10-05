@@ -206,6 +206,11 @@ struct SignalPipeline: Sendable {
         woken.insert(sessionID)
     }
 
+    /// A turn no prompt began (Antigravity CLI's, `SessionEngine.beginsUnpromptedTurn`): counted as a prompt's is.
+    mutating func turnBegan(_ sessionID: String) {
+        turns[sessionID, default: 0] += 1
+    }
+
     /// The session asks the owner something now (a request confirmed): a held Done is not a finished turn after all.
     mutating func dropHeld(_ sessionID: String) {
         held[sessionID] = nil

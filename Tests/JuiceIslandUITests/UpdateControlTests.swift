@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import JuiceIslandUI
@@ -26,6 +27,14 @@ struct UpdateControlTests {
         #expect(state(.idle, available: nil) == .hidden && state(.idle, available: nil).action(in: .toolbar) == .none)
         // A run: its words over its fill; the toolbar's click opens About, About's control takes none.
         #expect(state(.pulling) == .running(words: "Fetching", fraction: UpdateProgress.fetching))
+        // Waiting for a background prepare (P895): its own words, the fill where the build starts.
+        #expect(state(.waiting) == .running(words: "Waiting for build", fraction: UpdateProgress.fetchEnd))
+        #expect(state(.waiting).action(in: .toolbar) == .openAbout && state(.waiting).action(in: .about) == .none)
+        // Once the wait is over, the updater's checkout moves (P895): its own words, the fill where it was.
+        #expect(state(.settingUp) == .running(words: "Setting up", fraction: UpdateProgress.fetchEnd))
+        // Past the estimate (P897): still building, the fill held at the build's end.
+        let past = state(.building, progress: UpdateProgress(fraction: UpdateProgress.buildEnd, overran: true, busy: true))
+        #expect(past == .running(words: "Still building", fraction: UpdateProgress.buildEnd))
         let building = state(.building, progress: UpdateProgress(fraction: 0.6, buildPercent: 63, secondsLeft: 50))
         #expect(building == .running(words: "Building 63%", fraction: 0.6) && building.fill == 0.6)
         #expect(state(.building).words == "Building")
@@ -60,6 +69,15 @@ struct UpdateControlTests {
             == "Building 63% · about 2 min left · click for details")
         #expect(state(.building, progress: progress).help(available: Self.info, progress: progress, place: .about)
             == "Building 63% · about 2 min left")
+        // The words in full where the control has no room for them (P898).
+        #expect(state(.waiting).help(available: Self.info, progress: UpdateProgress(fraction: UpdateProgress.fetchEnd), place: .toolbar)
+            == "Waiting for the background build · click for details")
+        let busy = UpdateProgress(fraction: UpdateProgress.buildEnd, overran: true, busy: true)
+        #expect(state(.building, progress: busy).help(available: Self.info, progress: busy, place: .toolbar)
+            == "Still building, the Mac is busy · click for details")
+        let calm = UpdateProgress(fraction: UpdateProgress.buildEnd, overran: true)
+        #expect(state(.building, progress: calm).help(available: Self.info, progress: calm, place: .about)
+            == "Still building · taking longer than last time")
         let failed = state(.failed(reason: "update-app.sh stopped (exit 9)"))
         #expect(failed.help(available: Self.info, progress: .none, place: .toolbar)
             == "Update failed: The updater stopped (exit 9) · click for details")
@@ -67,6 +85,28 @@ struct UpdateControlTests {
             == "Update failed: The updater stopped (exit 9) · click to retry")
         #expect(state(.updated("3d74159"), available: nil).help(available: nil, progress: .none, place: .toolbar)
             == "Updated to 3d74159 · click for What's new")
+    }
+
+    /// Every word the control says fits its width at its size (P808, P898): the longest running words are "Waiting for
+    /// build" and "Still building"; the full ones go to the tooltip, the menus and About.
+    @Test func theControlsWordsFitItsWidth() {
+        let progresses = [UpdateProgress(fraction: 0.5, buildPercent: 99, secondsLeft: 1),
+                          UpdateProgress(fraction: UpdateProgress.buildEnd, overran: true, busy: true), .none]
+        var words = Set<String>()
+        for phase in [UpdatePhase.pulling, .waiting, .settingUp, .building, .installing] {
+            for progress in progresses { words.insert(UpdateControlState.of(available: Self.info, phase: phase, prepared: false, progress: progress).words) }
+        }
+        #expect(words.contains("Waiting for build") && words.contains("Still building") && words.contains("Building 99%"))
+        for (size, weight, width) in [(12.5, NSFont.Weight.medium, UpdateControlFace.Size.toolbar.width), (13, .medium, UpdateControlFace.Size.about.width)] as [(CGFloat, NSFont.Weight, CGFloat)] {
+            let font = NSFont.systemFont(ofSize: size, weight: weight)
+            // "Restart to update" with its arrow is the widest the control was made for.
+            let room = ("Restart to update" as NSString).size(withAttributes: [.font: font]).width + 17
+            #expect(room < width)
+            for word in words {
+                #expect((word as NSString).size(withAttributes: [.font: font]).width <= room, "\(word) at \(size) pt")
+            }
+            #expect((UpdateText.waitingFull as NSString).size(withAttributes: [.font: font]).width > width - 16, "the full words would not fit")
+        }
     }
 
     @Test func aFailuresReasonInPlainWords() {

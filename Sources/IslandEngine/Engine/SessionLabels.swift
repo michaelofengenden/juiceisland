@@ -10,13 +10,17 @@ public struct SessionLabels: Codable, Equatable, Sendable {
     public var model: String?
     public var mode: String?
     public var effort: String?
+    /// The session's real agent when its hooks named one its tool does not (`AgentKind`'s word: Copilot, Devin, an agent
+    /// behind Claude's hooks, P913). An older file has none.
+    public var agent: String?
     /// When a label last changed: the oldest go first past `SessionLabelBook.limit`, and at `SessionLabelBook.lifetime`.
     public var at: Date
 
-    public init(model: String? = nil, mode: String? = nil, effort: String? = nil, at: Date) {
+    public init(model: String? = nil, mode: String? = nil, effort: String? = nil, agent: String? = nil, at: Date) {
         self.model = model
         self.mode = mode
         self.effort = effort
+        self.agent = agent
         self.at = at
     }
 
@@ -52,16 +56,19 @@ struct SessionLabelBook: Equatable, Sendable {
     /// left it out, P497). True when something changed.
     @discardableResult
     mutating func take(_ sessionID: String, model: String?, mode: String?, effort: String?, effortSaid: Bool = false,
-                       at now: Date) -> Bool {
+                       agent: String? = nil, at now: Date) -> Bool {
         let kept = labels[sessionID]
         let next = SessionLabels(model: SessionLabels.label(model) ?? kept?.model, mode: SessionLabels.label(mode) ?? kept?.mode,
-                                 effort: SessionLabels.label(effort) ?? (effortSaid ? nil : kept?.effort), at: now)
-        if next.model == nil, next.mode == nil, next.effort == nil {
+                                 effort: SessionLabels.label(effort) ?? (effortSaid ? nil : kept?.effort),
+                                 agent: agent.flatMap { AgentKind(rawValue: $0)?.rawValue } ?? kept?.agent, at: now)
+        if next.model == nil, next.mode == nil, next.effort == nil, next.agent == nil {
             guard kept != nil else { return false }
             labels[sessionID] = nil
             return true
         }
-        guard kept.map({ ($0.model, $0.mode, $0.effort) != (next.model, next.mode, next.effort) }) ?? true else { return false }
+        guard kept.map({ ($0.model, $0.mode, $0.effort, $0.agent) != (next.model, next.mode, next.effort, next.agent) }) ?? true else {
+            return false
+        }
         labels[sessionID] = next
         trim()
         return true
@@ -95,9 +102,9 @@ public final class SessionLabelStore: @unchecked Sendable {
         self.url = url
     }
 
-    /// The app's own: beside the context notes' socket.
+    /// The app's own: in its home, beside its sockets (`HookHome.current`, the private app's `Juice Island` as before).
     public static var app: SessionLabelStore {
-        SessionLabelStore(url: HookNoteSocket.defaultURL.deletingLastPathComponent().appendingPathComponent(fileName))
+        SessionLabelStore(url: HookHome.current.folder.appendingPathComponent(fileName))
     }
 
     struct File: Codable {

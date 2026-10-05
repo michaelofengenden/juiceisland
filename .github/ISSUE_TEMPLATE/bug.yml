@@ -1,0 +1,83 @@
+name: Something does not work
+description: A bug in Juice. Say what you did, what you saw and what you expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what Juice did, and what you expected instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      description: The agent whose session it was, if any.
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Copilot CLI
+        - Cursor
+        - Qwen Code
+        - Devin
+        - Kilo
+        - Gemini CLI
+        - Antigravity
+        - Grok Build
+        - Qoder
+        - CodeBuddy
+        - Factory Droid
+        - Kimi Code
+        - Pi
+        - Oh My Pi
+        - Amp
+        - Another agent
+        - None (usage, money or the app itself)
+    validations:
+      required: true
+  - type: dropdown
+    id: terminal
+    attributes:
+      label: Terminal
+      description: Where the agent ran.
+      options:
+        - Terminal
+        - iTerm2
+        - Ghostty
+        - Warp
+        - WezTerm
+        - cmux
+        - tmux, in one of these
+        - VS Code
+        - Cursor
+        - Zed
+        - Another one
+        - Does not matter here
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS
+      description: Apple menu › About This Mac.
+      placeholder: "26.1, Apple silicon"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Juice version
+      description: Settings › About.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report
+      description: >-
+        Settings › Diagnostics › Copy Report, then paste it here. It holds states, times and counts, with no email,
+        key or session text. Read it before you send it.
+      render: text

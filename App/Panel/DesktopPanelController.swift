@@ -4,7 +4,7 @@ import Observation
 /// Shows the desktop panel per Settings › Desktop Panel, in either mode (Juice Island spec §4.3, §4.5):
 /// - Show on desktop shows or hides it (Settings' switch, the menu bar icon's item, the usage block's menu and the
 ///   panel's own Hide write the same setting); a panel with nothing to draw is not shown.
-/// - Lock position decides whether dragging its background moves it.
+/// - Lock position decides whether a drag on it moves it.
 /// - Display and Corner place it; Reset Position forgets where it was left on its display.
 /// - A drag is remembered per display, and the display it was left on becomes the chosen one.
 /// - A display that goes away sends it to the primary display until it comes back (Juice spec §2.6, P38).
@@ -19,7 +19,8 @@ final class DesktopPanelController {
     private var appliedCorner: PanelCorner?
     private var observers: [NSObjectProtocol] = []
     private var started = false
-    /// One save per drag: every step of one posts a move.
+    /// A move of the owner's not yet saved: every step of a drag posts one, and the drop or, for a move with no drop,
+    /// 250 ms of quiet saves it. While it is pending the controller never moves the panel itself.
     private var pendingMove: Task<Void, Never>?
 
     init(env: AppEnvironment, store: PanelPositionStore = PanelPositionStore(),
@@ -51,9 +52,10 @@ final class DesktopPanelController {
         env.watchAccountsInUse(false)
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
+        // Hidden first: a drag it cuts short posts its move, which goes with the rest.
+        surface?.hide()
         pendingMove?.cancel()
         pendingMove = nil
-        surface?.hide()
     }
 
     /// Settings › Desktop Panel › Reset Position: back to the corner on the panel's display.
@@ -83,6 +85,7 @@ final class DesktopPanelController {
         if self.surface == nil {
             self.surface = surface
             surface.onUserMove = { [weak self] in self?.userMoved() }
+            surface.onUserDrop = { [weak self] in self?.commitMove() }
         }
         surface.movesByDragging = !settings.panelLocked
         // A drag not yet saved: moving now would pull the panel back under the owner's pointer. `commitMove` catches up.
@@ -92,17 +95,20 @@ final class DesktopPanelController {
 
     // MARK: Drags
 
+    /// A step of the owner's drag, or a move left behind by one cut short. Saved at the drop (`commitMove`, from the
+    /// surface), or 250 ms after the last step if no drop comes; never while the button is still down, since the save
+    /// pulls the panel onto the visible frame and the next step would put it back under the pointer (P1215).
     private func userMoved() {
         pendingMove?.cancel()
         pendingMove = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            self?.commitMove()
+            guard !Task.isCancelled, let self, self.surface?.isDragging != true else { return }
+            self.commitMove()
         }
     }
 
     /// Where a drag left the panel: pulled whole onto the display it covers most, remembered for that display, and
-    /// that display becomes the chosen one.
+    /// that display becomes the chosen one. At the drop, or once a move with no drop has rested.
     func commitMove() {
         pendingMove?.cancel()
         pendingMove = nil

@@ -18,6 +18,10 @@ protocol SessionsModel: AnyObject, Observable {
     /// The sessions whose card waits on you (an approval, a plan, a question), in the order they began to wait: after
     /// one is answered, the island shows the next (P130).
     var waiting: [SessionRow] { get }
+    /// When the session's card that waits began to wait, on the awake clock (`ProcessInfo.systemUptime`): Allow all eats
+    /// a press while a card it would answer has just come in (P1032). nil when unknown, or for a card that already
+    /// waited when the model first looked.
+    func waitingSince(_ sessionID: String) -> TimeInterval?
     /// Sends first: the card goes once the decision went, and stays with "Not sent · Retry" when it could not (P129).
     /// `request`: the engine request the card showed (`CardRequest.id`); a click whose request is no longer the one
     /// waiting answers nothing, so it never lands on the request that took its place (P170). nil: the session's.
@@ -46,6 +50,9 @@ protocol SessionsModel: AnyObject, Observable {
     /// The engine request whose card the island shows now, as the owner sees it (nil: none): a subagent's request held
     /// for the island is held only while its card shows (P350). Only the island reports it.
     func islandShows(requestID: String?)
+    /// The engine requests whose cards the window shows the owner now (Window mode, P1050): a Codex request held for
+    /// its card is held while the island or the window shows it. Only the window reports it.
+    func windowShows(requestIDs: Set<String>)
     /// The last click's note, until it clears itself; nil after an exact jump.
     var jumpNote: JumpNote? { get }
     /// Where the island hears of a finish (`IslandAttention.signals`): the rows, or the live engine's Done signals.
@@ -69,10 +76,12 @@ extension SessionsModel {
     var jumpNote: JumpNote? { nil }
     var finishSource: FinishSource { .rows }
     var waiting: [SessionRow] { rows.filter(\.hasCard) }
+    func waitingSince(_ sessionID: String) -> TimeInterval? { nil }
     func retry(_ sessionID: String) {}
     func openRequest(_ sessionID: String, request: String?) { jump(sessionID) }
     func dismissRequest(_ sessionID: String, request: String?) {}
     func islandShows(requestID: String?) {}
+    func windowShows(requestIDs: Set<String>) {}
     func openFresh(_ sessionID: String, in alternative: LimitAlternative) {}
     func openRequest(_ sessionID: String) { openRequest(sessionID, request: nil) }
     func dismissRequest(_ sessionID: String) { dismissRequest(sessionID, request: nil) }
@@ -188,6 +197,9 @@ struct SessionRow: Identifiable, Equatable, Sendable {
     /// The profile folder the session runs in, from its transcript's path as the engine tags it (`SessionAccountTag`):
     /// which account it uses, for the accounts in use (`AccountsInUse`, P810). nil when not known.
     var account: RowAccount? = nil
+    /// Its card is an approval the agent waits on with no prompt of its own (`AttentionRequest.waitsOnIslandAlone`: Codex
+    /// behind the old helper, Copilot CLI, Devin, Qwen Code): no mute rule keeps it quiet (P931).
+    var waitsOnIsland = false
 
     var isInterrupted: Bool { status == .interrupted }
     /// What the closed pill and the footer's count may tell of: every row of the owner's, a quiet one only while its

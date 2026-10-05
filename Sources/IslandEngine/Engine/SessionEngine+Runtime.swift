@@ -30,21 +30,28 @@ extension SessionEngine {
             hasStarted = true
         }
         if bridgeServer != nil, observerTask == nil { connectObserver() }
-        if bridgeServer != nil { watchBridgeSockets() }
+        if bridgeServer != nil {
+            watchBridgeSockets()
+            checkLegacyRelay()
+        }
     }
 
     /// The owner checks, then the bind, then each socket path's identity as the bind left it (`bridgeHealth`). The
-    /// checks come first, so a refusal binds nothing: Open Island running, or a live listener on any path the bridge
-    /// would take over (`BridgeServer` unlinks whatever is there). `probed` are paths just probed and found free, or
-    /// held by the bridge being replaced, which are not probed again.
+    /// checks come first, so a refusal binds nothing: a live listener on the bridge's socket (`BridgeServer` unlinks
+    /// whatever is there), or, for a bridge on Open Island's own socket, Open Island running. A bridge on the app's own
+    /// socket runs beside Open Island (P900); the legacy `/tmp` path every `BridgeServer` also binds is then no reason to
+    /// refuse, since no current helper dials it (P912). `probed` are paths just probed and found free, or held by the
+    /// bridge being replaced, which are not probed again.
     func startBridgeServer(probed: Set<String> = []) throws {
-        if dependencies.isOtherIslandRunning() {
+        let ownsSocket = configuration.ownsSocket
+        if !ownsSocket, dependencies.isOtherIslandRunning() {
             lastStatusMessage = "Open Island is running; quit it first so the two apps do not fight over the hook socket."
             throw SessionEngineError.otherIslandRunning
         }
         let paths = HookSocketProbe.paths(for: configuration.socketURL)
         let hasOwner = dependencies.socketHasOwner ?? { HookSocketProbe.probe($0).hasOwner }
-        for url in paths where !probed.contains(url.path) && hasOwner(url) {
+        let legacy = BridgeSocketLocation.legacyURL.path
+        for url in paths where !probed.contains(url.path) && !(ownsSocket && url.path == legacy) && hasOwner(url) {
             lastStatusMessage = "Another app is listening on \(url.lastPathComponent); quit every island app first."
             throw SessionEngineError.hookSocketInUse(path: url.path)
         }
@@ -100,6 +107,7 @@ extension SessionEngine {
 
     /// The bridge and its observer only: the context notes, discovery and monitoring go on (a socket taken back).
     func stopBridgeServer() {
+        stopLegacyRelay()
         observerTask?.cancel()
         observerTask = nil
         reconnectTask?.cancel()

@@ -27,6 +27,12 @@ final class LiveSessions: SessionsModel {
     /// The demo feed, only while the switch is off.
     private(set) var demo: (any SessionsModel)?
     private var live: (any SessionsModel)?
+    /// Made-up sessions shown in place of every other for a while: the welcome's Hello demo (P963) or Diagnostics' Demo
+    /// sessions (P967). The live engine runs on underneath and keeps every real request; they show again as this goes.
+    private(set) var showcase: (any SessionsModel)?
+    private(set) var showcaseKind: ShowcaseKind?
+
+    enum ShowcaseKind: Equatable, Sendable { case hello, demoSessions }
 
     @ObservationIgnored let settings: AppSettings
     @ObservationIgnored let identity: AppIdentity
@@ -38,6 +44,9 @@ final class LiveSessions: SessionsModel {
     /// The screen is locked or the owner's session switched out (`ScreenLockWatch.isAway`): Quiet while locked holds the
     /// sounds back (P422). Never, but in the app.
     @ObservationIgnored private let away: @MainActor () -> Bool
+    /// The screen mirrored or a Focus that quiets (`QuietScenes`, P1005, P1006): holds the sounds back as Quiet hours do.
+    /// None, but in the app.
+    @ObservationIgnored private let scene: @MainActor () -> QuietScene
     /// Made on the first switch-on and kept: upstream's process monitor has no stop, so a new engine would add another.
     @ObservationIgnored private(set) var engine: SessionEngine?
     @ObservationIgnored private var aliases: [String: String] = [:]
@@ -46,12 +55,12 @@ final class LiveSessions: SessionsModel {
     @ObservationIgnored var onReleased: (@MainActor (EngineSignal) -> Void)?
 
     /// `sounds` plays the signals: the app passes the system's player, and everything else plays nothing. `away`: the
-    /// app's lock watch.
+    /// app's lock watch; `scene`: its quiet scenes.
     init(settings: AppSettings, demo: @escaping @MainActor () -> any SessionsModel,
          engine: @escaping @MainActor () -> SessionEngine = { SessionEngine() },
          profiles: @escaping @MainActor () -> LiveProfiles = { LiveProfiles.load() },
          identity: AppIdentity = .development, sounds: any SoundPlaying = SilentSoundPlayer(),
-         away: @escaping @MainActor () -> Bool = { false }) {
+         away: @escaping @MainActor () -> Bool = { false }, scene: @escaping @MainActor () -> QuietScene = { .none }) {
         self.settings = settings
         self.identity = identity
         makeDemo = demo
@@ -59,6 +68,7 @@ final class LiveSessions: SessionsModel {
         loadProfiles = profiles
         self.sounds = sounds
         self.away = away
+        self.scene = scene
         self.demo = identity.showsDemoSessions ? demo() : nil
     }
 
@@ -181,9 +191,9 @@ final class LiveSessions: SessionsModel {
         }
     }
 
-    /// Answer subagents on the island and Answer Codex on the island, applied to the engine as they or Show as change:
-    /// only the island shows the card a hold needs, so in Window mode every such request is handed back at once (P350,
-    /// P470).
+    /// Answer subagents on the island and Answer Codex on the island, applied to the engine as they or Show as change. A
+    /// subagent's hold is the island's alone, so in Window mode every subagent request is handed back at once (P350); a
+    /// Codex hold waits on the window's Needs you card there as it waits on the island's card in Island mode (P470, P1050).
     private func observeSubagentSwitch() {
         engine?.answersSubagents = Self.answersSubagents(settings)
         engine?.answersCodex = Self.answersCodex(settings)
@@ -197,7 +207,7 @@ final class LiveSessions: SessionsModel {
     }
 
     static func answersSubagents(_ settings: AppSettings) -> Bool { settings.answerSubagentsOnIsland && settings.showAs == .island }
-    static func answersCodex(_ settings: AppSettings) -> Bool { settings.answerCodexOnIsland && settings.showAs == .island }
+    static func answersCodex(_ settings: AppSettings) -> Bool { settings.answerCodexOnIsland }
 
     /// Permission modes on cards, applied to the engine as it changes: off, no card offers a mode and none is sent (P450).
     private func observeModeChoicesSwitch() {
@@ -217,7 +227,7 @@ final class LiveSessions: SessionsModel {
         let muted = !settings.muteRules.isEmpty && row(id: signal.sessionID).map { settings.muteRules.mutes($0) } == true
         let isCodexAppThread = session.map { engine?.isCodexAppThread($0) == true } ?? false
         if let name = SignalSounds.sound(for: signal, isCodexAppThread: isCodexAppThread, stillNeedsYou: stillNeedsYou,
-                                         isQuestion: isQuestion, muted: muted, away: away(), settings: settings) {
+                                         isQuestion: isQuestion, muted: muted, away: away(), scene: scene(), settings: settings) {
             sounds.play(name, volume: SignalSounds.volume(settings))
         }
         if case let .done(sessionID) = signal {
@@ -267,14 +277,25 @@ final class LiveSessions: SessionsModel {
         }
     }
 
+    /// Shows `model` in place of the sessions (nil: the sessions again). Never written to the settings: a relaunch shows
+    /// the real sessions.
+    func show(_ model: (any SessionsModel)?, as kind: ShowcaseKind?) {
+        showcase = model
+        showcaseKind = model == nil ? nil : kind
+    }
+
+    /// Real sessions show (no showcase): banners, reminders and the tidy act only then.
+    var showsRealSessions: Bool { showcase == nil }
+
     // MARK: SessionsModel
 
-    private var current: (any SessionsModel)? { mode == .live ? live : demo }
+    private var current: (any SessionsModel)? { showcase ?? (mode == .live ? live : demo) }
 
     var rows: [SessionRow] { current?.rows ?? [] }
     var now: Date { current?.now ?? Date() }
     func card(for sessionID: String) -> SessionCard? { current?.card(for: sessionID) }
     var waiting: [SessionRow] { current?.waiting ?? [] }
+    func waitingSince(_ sessionID: String) -> TimeInterval? { current?.waitingSince(sessionID) }
     func approve(_ sessionID: String, _ decision: ApprovalDecision, request: String?) {
         current?.approve(sessionID, decision, request: request)
     }
@@ -290,9 +311,13 @@ final class LiveSessions: SessionsModel {
     func openRequest(_ sessionID: String, request: String?) { current?.openRequest(sessionID, request: request) }
     func dismissRequest(_ sessionID: String, request: String?) { current?.dismissRequest(sessionID, request: request) }
     func islandShows(requestID: String?) { current?.islandShows(requestID: requestID) }
+    func windowShows(requestIDs: Set<String>) { current?.windowShows(requestIDs: requestIDs) }
     func openFresh(_ sessionID: String, in alternative: LimitAlternative) { current?.openFresh(sessionID, in: alternative) }
     var jumpNote: JumpNote? { current?.jumpNote }
-    var finishSource: FinishSource { mode == .live ? .engine(last: releasedFinish) : current?.finishSource ?? .rows }
+    var finishSource: FinishSource {
+        if let showcase { return showcase.finishSource }
+        return mode == .live ? .engine(last: releasedFinish) : current?.finishSource ?? .rows
+    }
     func peek(_ sessionID: String, clean: Bool) async -> SessionPeek? { await current?.peek(sessionID, clean: clean) }
     func work(_ sessionID: String) -> SessionWork? { current?.work(sessionID) }
 }
@@ -308,11 +333,15 @@ struct LiveProfiles: Equatable, Sendable {
     /// On any thread (`ProfileDirectory` reloads off the main one).
     static func load(accountsFile: URL = AccountsStore.defaultFileURL, home: String = NSHomeDirectory()) -> LiveProfiles {
         let accounts = (try? Data(contentsOf: accountsFile)).map(AccountsStore.accounts(in:)) ?? []
+        return LiveProfiles(accounts: accounts, discovered: discovered(home: home))
+    }
+
+    /// The default ~/.claude and ~/.codex, then every other profile folder in `home`; the accounts file is not read.
+    static func discovered(home: String) -> [DiscoveredProfile] {
         let defaults = Provider.allCases.map {
             DiscoveredProfile(provider: $0, folder: home + "/" + $0.defaultFolderName, suggestedAlias: $0.displayName)
         }
         let folders = Set(defaults.map(\.folder))
-        let found = ProfileFolderDiscovery.discover(home: home).filter { !folders.contains($0.folder) }
-        return LiveProfiles(accounts: accounts, discovered: defaults + found)
+        return defaults + ProfileFolderDiscovery.discover(home: home).filter { !folders.contains($0.folder) }
     }
 }

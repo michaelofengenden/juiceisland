@@ -1,6 +1,6 @@
 # Contributing to Juice
 
-Thanks for looking. This repository is published from the maintainer's own working copy, one commit per update, so a pull request is carried over by hand rather than merged here. Open an issue first for anything bigger than a small fix.
+Thanks for looking. This repository is published from the maintainer's own working copy, one commit per update, so a pull request is carried over by hand rather than merged here. Open an issue first for anything bigger than a small fix: the forms ask for what a bug report needs. A security problem goes privately, as [SECURITY.md](SECURITY.md) says.
 
 ## Build and test
 

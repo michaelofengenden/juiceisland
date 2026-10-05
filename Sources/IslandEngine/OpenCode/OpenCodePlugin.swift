@@ -1,14 +1,16 @@
 // Changed from Open Island 1.2.1's Sources/OpenIslandApp/Resources/open-island-opencode.js (GPL-3.0), September 2026:
 // the same plugin, loading under OpenCode 2 too, with the differences below.
 import Foundation
+import IslandHookNotes
 
 /// Juice Island's plugin for OpenCode (P480 to P484): one file for both plugin APIs. OpenCode 1 loads its `server`, as
 /// it loads Open Island's plugin; OpenCode 2's loader wants a default export with an `id` and a `setup` and refuses
 /// anything else ("Plugin must export a default definition with an id and an effect or setup function",
 /// anomalyco/opencode `packages/core/src/config/plugin/external.ts`), which is why Open Island 1.2.1's plugin, a bare
-/// function, never loads under OpenCode 2. It is written only by a click in Settings › Setup (`OpenCodePluginInstaller`)
-/// to `~/.config/opencode/plugins/open-island.js`, the name Open Island's plugin has, so it takes that file's place;
-/// both OpenCode 1 (1.4 and later) and OpenCode 2 load every `plugin/*.js` and `plugins/*.js` of their config folder.
+/// function, never loads under OpenCode 2. It is written only by a click in Settings › Agents (`OpenCodePluginInstaller`)
+/// to `~/.config/opencode/plugins/<flavor's stem>.js` (`juice-island.js`, `juice.js`), beside Open Island's
+/// `open-island.js`, which Juice leaves alone (P934); both OpenCode 1 (1.4 and later) and OpenCode 2 load every
+/// `plugin/*.js` and `plugins/*.js` of their config folder.
 ///
 /// What it sends is what Open Island's plugin sends (`BridgeServer.handleOpenCodeHook` decodes it unchanged), with
 /// these differences: no debug log (upstream appends each event's first 300 characters, prompts and replies included,
@@ -21,30 +23,51 @@ import Foundation
 /// OpenCode 2 gives plugins no way to answer a question (P481).
 public enum OpenCodePlugin {
     /// The plugin's revision, on its first line: a file whose revision is older than this build's is offered Update.
-    public static let revision = 1
-    /// Open Island's name for the file: ours replaces it in place.
-    public static let fileName = "open-island.js"
-    /// The first line of every revision, before the number.
-    static let marker = "// Juice Island plugin for OpenCode, revision "
+    /// Revision 2 dials the app's own hook socket (`HookHome`, P900) instead of Open Island's, and is written for Kilo
+    /// too, its sessions named `kilo-…` (P923). Revision 3 has a file of its own, named per flavor, so Open Island's
+    /// launch, which writes `open-island.js` back, never takes OpenCode's sessions from Juice (P934).
+    public static let revision = 3
+    /// Juice's own file, per flavor: `juice-island.js`, `juice.js`.
+    public static var fileName: String { "\(HookHome.ownFileStem).js" }
+    /// Open Island's name for its file, where Juice wrote revisions 1 and 2: Update and Remove take only Juice's own
+    /// plugin out of it, never Open Island's.
+    public static let legacyFileName = "open-island.js"
+    /// The first line of every revision, before the number; revisions 1 and 2 began with `olderMarker`.
+    static let marker = "// Juice plugin for OpenCode and Kilo, revision "
+    static let olderMarker = "// Juice Island plugin for OpenCode, revision "
     /// The first line of Open Island's plugin (1.2.1), which only OpenCode 1 loads.
     static let openIslandMarker = "// Open Island plugin for OpenCode"
 
+    /// This app's plugin for OpenCode: its socket (`HookHome.current`).
     public static var data: Data { Data(source.utf8) }
 
-    public static let source = #"""
-// Juice Island plugin for OpenCode, revision 1.
-// Tells Juice Island's hook socket what OpenCode's sessions do, for OpenCode 1 (server) and OpenCode 2 (setup).
-// Installed, updated and removed only from Juice Island's Settings, Setup. It writes no file and logs nothing.
-import { connect } from "net";
-import { homedir } from "os";
+    public static var source: String { source(socketPath: HookHome.current.bridgeURL.path) }
 
-const REVISION = 1;
+    /// The plugin that dials `socketPath`, for OpenCode or for Kilo (an OpenCode fork with the same plugin API, P923).
+    public static func source(socketPath: String, kind: AgentKind = .opencode) -> String {
+        let quoted = (try? JSONSerialization.data(withJSONObject: [socketPath], options: [.withoutEscapingSlashes]))
+            .map { String(decoding: $0, as: UTF8.self).dropFirst().dropLast() }.map(String.init) ?? "\"\""
+        var text = template.replacingOccurrences(of: socketPlaceholder, with: quoted)
+        if kind == .kilo {
+            text = text.replacingOccurrences(of: "`opencode-${sessionID}`", with: "`kilo-${sessionID}`")
+                .replacingOccurrences(of: "`opencode2-${sessionID}`", with: "`kilo2-${sessionID}`")
+        }
+        return text
+    }
+
+    static let socketPlaceholder = "__JUICE_SOCKET_PATH__"
+
+    static let template = #"""
+// Juice plugin for OpenCode and Kilo, revision 3.
+// Tells the app's own hook socket what OpenCode's sessions do, for OpenCode 1 (server) and OpenCode 2 (setup).
+// Installed, updated and removed only from the app's Settings, Agents. It writes no file and logs nothing.
+import { connect } from "net";
+
+const REVISION = 3;
 // A card's connection stays open this long at most. It holds nothing: OpenCode shows its own prompt at the same time and
 // takes the first answer.
 const HOLD_MS = 30 * 60 * 1000;
-const SOCKET_PATH =
-  process.env.OPEN_ISLAND_SOCKET_PATH ||
-  `${process.env.HOME || homedir()}/Library/Application Support/OpenIsland/bridge.sock`;
+const SOCKET_PATH = __JUICE_SOCKET_PATH__;
 
 function encodeEnvelope(command) {
   return JSON.stringify({ type: "command", command }) + "\n";

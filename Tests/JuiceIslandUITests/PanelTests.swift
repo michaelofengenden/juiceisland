@@ -482,7 +482,9 @@ final class FakePanelSurface: DesktopPanelSurface {
     private(set) var panelFrame: CGRect = .zero
     private(set) var isShown = false
     var movesByDragging = false
+    var isDragging = false
     var onUserMove: (@MainActor () -> Void)?
+    var onUserDrop: (@MainActor () -> Void)?
     private(set) var frameSets = 0
 
     func setPanelFrame(_ frame: CGRect) {

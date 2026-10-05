@@ -302,7 +302,8 @@ struct HookPreludeBrokerTests {
 
     @Test
     func anotherSourcesPermissionRequestKeepsUpstreamsPath() {
-        let result = run(HookBrokerClientTests.claudeInput, source: "qwen", broker: .output(Data("x".utf8)))
+        // Gemini's hooks go to upstream's helper as they came (Kimi's are the helper's own now, P1131).
+        let result = run(HookBrokerClientTests.claudeInput, source: "gemini", broker: .output(Data("x".utf8)))
         #expect(result.brokered.isEmpty)
         #expect(result.stdin == HookBrokerClientTests.claudeInput)
     }

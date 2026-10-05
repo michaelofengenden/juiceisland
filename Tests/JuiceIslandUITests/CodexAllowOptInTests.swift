@@ -184,6 +184,79 @@ struct CodexAllowOptInTests {
         #expect(rig.engine.openRequests.isEmpty && rig.card("c1") == nil)
     }
 
+    // MARK: Answered in the window (P1050)
+
+    /// Window mode: the window's Needs you card holds the request as the island's card does. Shown there, Yes reaches
+    /// that request's own helper as Codex's allow, and No with a reason as its deny.
+    @Test
+    func cxhTheWindowsCardAnswersCodexInWindowMode() async throws {
+        let (rig, watch) = try await optedIn()
+        defer { watch.tracker.stop(); rig.stop() }
+        let run = await ask(rig, watch)
+        await rig.waitUntil { approval(rig)?.isAnswerable == true }
+        let shown = try held(rig)
+        rig.model.windowShows(requestIDs: [shown.request.id])
+        rig.advance(CodexHold.showGrace + 3)
+        #expect(run.isRunning && approval(rig)?.isAnswerable == true)
+        await rig.model.decide("c1", .allowOnce, request: shown.request.id)
+        let decision = try #require(await printed(run))
+        #expect(decision["behavior"] as? String == "allow")
+        await rig.settle()
+        #expect(rig.card("c1") == nil && rig.engine.openRequests.isEmpty)
+        await ran(rig, watch, "call_1", Self.migrate["command"] as! String)
+
+        let second = await ask(rig, watch, Self.clean)
+        await rig.waitUntil { approval(rig)?.isAnswerable == true }
+        let request = try held(rig).request
+        rig.model.windowShows(requestIDs: [request.id])
+        rig.advance(4)
+        await rig.model.decide("c1", .denyWithReason("keep the build"), request: request.id)
+        let no = try #require(await printed(second))
+        #expect(no["behavior"] as? String == "deny" && no["message"] as? String == "keep the build")
+        #expect(rig.engine.attentionTally.codexHolds.isEmpty)
+    }
+
+    /// Held only while the window shows it: never shown within the grace, released at `showGrace`; shown, then no longer
+    /// (the window covered, closed or minimised, the owner in another app, the card scrolled away), released at once;
+    /// still shown by the island, the window letting it go keeps it held.
+    @Test
+    func cxhItIsHeldOnlyWhileTheWindowShowsIt() async throws {
+        let (rig, watch) = try await optedIn()
+        defer { watch.tracker.stop(); rig.stop() }
+        let unseen = await ask(rig, watch)
+        await rig.waitUntil { approval(rig)?.isAnswerable == true }
+        rig.model.windowShows(requestIDs: [])
+        rig.advance(CodexHold.showGrace + 0.5)
+        #expect(await silent(unseen) && approval(rig)?.isAnswerable == false)
+        await ran(rig, watch, "call_1", Self.migrate["command"] as! String)
+        await rig.waitUntil { rig.card("c1") == nil }
+
+        let covered = await ask(rig, watch, Self.clean)
+        await rig.waitUntil { approval(rig)?.isAnswerable == true }
+        let coveredID = try held(rig).request.id
+        rig.model.windowShows(requestIDs: [coveredID])
+        rig.advance(4)
+        rig.model.windowShows(requestIDs: [coveredID, "another-request"])
+        #expect(covered.isRunning)
+        rig.model.windowShows(requestIDs: ["another-request"])
+        #expect(await silent(covered) && approval(rig)?.isAnswerable == false)
+        rig.model.windowShows(requestIDs: [])
+        await ran(rig, watch, "call_2", Self.clean["command"] as! String)
+        await rig.waitUntil { rig.card("c1") == nil }
+
+        let both = await ask(rig, watch)
+        await rig.waitUntil { approval(rig)?.isAnswerable == true }
+        let bothID = try held(rig).request.id
+        rig.model.windowShows(requestIDs: [bothID])
+        rig.model.islandShows(requestID: bothID)
+        rig.model.windowShows(requestIDs: [])
+        rig.advance(3)
+        #expect(both.isRunning && approval(rig)?.isAnswerable == true)
+        rig.model.islandShows(requestID: nil)
+        #expect(await silent(both))
+        #expect(rig.engine.attentionTally.codexHolds == ["notShown": 1, "hidden": 2])
+    }
+
     // MARK: Released: Codex's own prompt decides
 
     /// No answer: at the limit the hold ends, the helper exits silent (Codex shows its own prompt) and the card turns
@@ -341,21 +414,24 @@ struct CodexAllowOptInTests {
     }
 }
 
-/// The switch itself (P470): off by default, on only in Island mode (the window shows no card a hold could wait on),
-/// kept in defaults, followed by the live engine as it or Show as changes; Diagnostics counts how Codex holds ended.
+/// The switch itself (P470): off by default, on in both modes since the window's Needs you card holds a request as the
+/// island's card does (P1050; Answer subagents stays the island's), kept in defaults, followed by the live engine as it
+/// changes; Diagnostics counts how Codex holds ended.
 @MainActor
 @Suite(.serialized)
 struct CodexAnswerSwitchTests {
     @Test
-    func theSwitchIsOffByDefaultAndOnlyForTheIsland() throws {
+    func theSwitchIsOffByDefaultAndAnswersInEitherMode() throws {
         let settings = AppSettings.ephemeral()
         #expect(!settings.answerCodexOnIsland)
         settings.showAs = .island
         #expect(!LiveSessions.answersCodex(settings))
         settings.answerCodexOnIsland = true
-        #expect(LiveSessions.answersCodex(settings) && !LiveSessions.answersSubagents(settings))
+        settings.answerSubagentsOnIsland = true
+        #expect(LiveSessions.answersCodex(settings) && LiveSessions.answersSubagents(settings))
         settings.showAs = .window
-        #expect(!LiveSessions.answersCodex(settings))
+        #expect(LiveSessions.answersCodex(settings) && !LiveSessions.answersSubagents(settings))
+        settings.answerSubagentsOnIsland = false
 
         let suite = "ji-test-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -382,7 +458,12 @@ struct CodexAnswerSwitchTests {
         settings.answerCodexOnIsland = true
         for _ in 0..<100 where !engine.answersCodex { try await Task.sleep(for: .milliseconds(10)) }
         #expect(engine.answersCodex && !engine.answersSubagents)
+        settings.answerSubagentsOnIsland = true
+        for _ in 0..<100 where !engine.answersSubagents { try await Task.sleep(for: .milliseconds(10)) }
         settings.showAs = .window
+        for _ in 0..<100 where engine.answersSubagents { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(engine.answersCodex && !engine.answersSubagents)
+        settings.answerCodexOnIsland = false
         for _ in 0..<100 where engine.answersCodex { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!engine.answersCodex)
     }

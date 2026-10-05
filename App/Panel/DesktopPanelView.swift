@@ -26,6 +26,8 @@ struct DesktopPanelBody: View {
     let content: DesktopPanelContent
     let size: CGSize
     @Environment(\.juiceTheme) private var theme
+    /// Drawing the copy that casts Widget's full-colour ink shadow (P1206): the divider, a veil, casts none.
+    @Environment(\.inkShadowPass) private var shadowPass
     private var palette: PanelPalette { theme.panel }
 
     var body: some View {
@@ -37,7 +39,7 @@ struct DesktopPanelBody: View {
             if !content.money.isEmpty {
                 if !content.rows.isEmpty {
                     Rectangle()
-                        .fill(palette.divider)
+                        .fill(shadowPass ? .clear : palette.divider)
                         .frame(height: 1)
                         .padding(.top, P.dividerAbove)
                         .padding(.bottom, P.dividerBelow)
@@ -109,9 +111,14 @@ private struct PanelBackgroundMenu: View {
 
 /// The window's content: the panel inside its 24 pt shadow margin, pinned to the bottom so a panel that shrinks
 /// (money switched off) keeps its place while the window follows.
+///
+/// It takes the desktop widgets' look of the moment (`widgets`, P1204): Glass look Widget draws the panel as macOS draws its
+/// widgets beside it, full colour while the desktop is in front and dimmed while an app is (P1214). Without a watch (renders,
+/// previews) it draws Widget as the island does.
 struct DesktopPanelRootView: View {
     let actions: PanelActions
     let hover: @MainActor @Sendable (HoverTarget?) -> Void
+    var widgets: DesktopWidgetWatch?
 
     var body: some View {
         DesktopPanelView()
@@ -119,6 +126,7 @@ struct DesktopPanelRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .environment(\.panelActions, actions)
             .environment(\.hoverReporter, hover)
+            .environment(\.widgetGlassState, widgets?.state ?? .overApps)
             .modifier(DesktopPanelInkScheme())
     }
 }

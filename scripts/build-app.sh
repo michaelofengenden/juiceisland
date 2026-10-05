@@ -14,6 +14,9 @@
 #   --public       the public flavor, "Juice.app" (P821): scripts/build-public.sh builds it from project-public.yml with
 #                  Sparkle, its own ids and the untracked Signing.local.xcconfig; nothing below runs for it. For this
 #                  Mac's chip, or with --universal after it for Apple silicon and Intel, as release.sh asks (P880).
+# The dev and --prod builds are for this Mac's chip only (`uname -m`: arm64 on Apple silicon), one destination named and
+# ONLY_ACTIVE_ARCH on, so no x86_64 compile runs: xcodebuild's default for a Release build is both chips, twice the
+# work, and the private app only ever runs on the Mac that built it (P890). Only --public --universal builds both.
 # update-app.sh and install-app.sh pass a staging folder to build into.
 # Usage: zsh scripts/build-app.sh [--prod | --public [--universal]] [output-folder]
 # Overrides: JI_SIGN_IDENTITY (the identity's SHA-1 hash or name; "-" signs ad hoc), JI_LSREGISTER.
@@ -58,8 +61,10 @@ if (( prod )); then
   fi
 fi
 
+arch=$(uname -m)
 xcodegen generate --quiet
 xcodebuild -project JuiceIsland.xcodeproj -scheme JuiceIsland -configuration Release -derivedDataPath "$derived" \
+  -destination "platform=macOS,arch=$arch" ARCHS="$arch" ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
   JI_BUNDLE_ID="$bundle_id" JI_PRODUCT_NAME="$name" \
   build -quiet

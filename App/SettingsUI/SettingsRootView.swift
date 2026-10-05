@@ -57,11 +57,11 @@ struct SettingsPaneView: View {
         case .island: IslandPane()
         case .sound: SoundPane()
         case .shortcuts: ShortcutsPane()
+        case .agents: AgentsPane()
         case .accounts: AccountsPane()
         case .money: MoneyPane()
         case .desktopPanel: DesktopPanelPane()
         case .diagnostics: DiagnosticsPane()
-        case .setup: SetupPane()
         case .about: AboutPane()
         }
     }

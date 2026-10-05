@@ -27,7 +27,7 @@ struct WhatsNewCard: View {
             VStack(alignment: .leading, spacing: size == .window ? 4 : 2) {
                 HStack(spacing: 6) {
                     Circle().fill(palette.tone(Self.blue)).frame(width: 6, height: 6)
-                    Text("What's new").font(font.weight(.semibold)).foregroundStyle(HookDriftLine.text(theme)).lineLimit(1)
+                    Text(UpdateText.whatsNewTitle(automatic: controller.installedAutomatically)).font(font.weight(.semibold)).foregroundStyle(HookDriftLine.text(theme)).lineLimit(1)
                     Spacer(minLength: 8)
                     Button { controller.dismissWhatsNew() } label: {
                         CrossIcon(colour: HookDriftLine.dot(theme)).frame(width: 16, height: 16).contentShape(Rectangle())

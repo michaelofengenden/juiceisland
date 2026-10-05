@@ -156,9 +156,9 @@ enum GeneralPaneText {
         }
     }
 
-    /// Live sessions takes Open Island's hook socket, and approvals then wait for an answer here. The release build's
-    /// row shows only while the switch is off, and needs no reminder.
+    /// Live sessions listens on the app's own hook socket (P900), and approvals then wait for an answer here. The
+    /// release build's row shows only while the switch is off, and needs no reminder.
     static func liveSessions(_ identity: AppIdentity) -> String? {
-        identity == .production ? nil : "Quit Open Island first. Approvals then wait for you here."
+        identity == .production ? nil : "Approvals then wait for you here."
     }
 }

@@ -41,7 +41,8 @@ public enum SubagentHold {
         case timeUp
         /// The island never showed its card within `showGrace`.
         case notShown
-        /// The island stopped showing it: a fold, another app, Esc, another card in its place, Window mode.
+        /// The island stopped showing it (a fold, another app, Esc, another card in its place, Window mode), and the
+        /// window does not show it either (closed, covered, another app, P1050).
         case hidden
         /// Open, a jump to its session, or ✕.
         case opened
@@ -108,7 +109,20 @@ extension SessionEngine {
         guard previous != requestID else { return }
         islandShownRequest = requestID
         if let requestID, attention.request(requestID)?.isHeldForIsland == true { subagentHoldsSeen.insert(requestID) }
-        if let previous { endSubagentHold(previous, .hidden) }
+        if let previous, !windowShownRequests.contains(previous) { endSubagentHold(previous, .hidden) }
+    }
+
+    /// The requests whose cards the window shows the owner now (Window mode, P1050): the Needs you cards in view while
+    /// the window is on screen and the owner has not gone to another app; empty otherwise (closed, minimised, covered,
+    /// Island mode). A request held for its card is held while the island or the window shows it, and ends at once when
+    /// neither does, as the island's fold ends it. Only Codex requests are held in Window mode (`answersSubagents` is the
+    /// island's alone).
+    public func windowShows(requestIDs: Set<String>) {
+        let previous = windowShownRequests
+        guard previous != requestIDs else { return }
+        windowShownRequests = requestIDs
+        for id in requestIDs where attention.request(id)?.isHeldForIsland == true { subagentHoldsSeen.insert(id) }
+        for id in previous.subtracting(requestIDs) where islandShownRequest != id { endSubagentHold(id, .hidden) }
     }
 
     /// A subagent's request held for the island: released if the island has not shown it within `showGrace`, and at
@@ -118,7 +132,8 @@ extension SessionEngine {
         let id = request.id, now = dependencies.now()
         dependencies.scheduleAttentionCheck(max(0, request.openedAt.addingTimeInterval(SubagentHold.showGrace).timeIntervalSince(now))) {
             [weak self] in
-            guard let self, !self.subagentHoldsSeen.contains(id), self.islandShownRequest != id else { return }
+            guard let self, !self.subagentHoldsSeen.contains(id), self.islandShownRequest != id,
+                  !self.windowShownRequests.contains(id) else { return }
             self.endSubagentHold(id, .notShown)
         }
         dependencies.scheduleAttentionCheck(max(0, ends.timeIntervalSince(now))) { [weak self] in

@@ -23,17 +23,22 @@ struct IslandScreen: Equatable, Sendable {
 extension IslandScreen {
     /// Reads a real screen. The id is the display's UUID (stable across reboots), else its number.
     @MainActor init(_ screen: NSScreen) {
-        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-        var id = number.map { "display-\($0.uint32Value)" } ?? screen.localizedName
-        if let number, let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue(),
-           let text = CFUUIDCreateString(nil, uuid) as String? {
-            id = text
-        }
+        let id = Self.displayID(of: screen)
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         self.init(id: id, frame: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                   auxiliaryLeftWidth: screen.auxiliaryTopLeftArea?.width, auxiliaryRightWidth: screen.auxiliaryTopRightArea?.width,
                   menuBarHeight: menuBar > 0 ? menuBar : nil, scale: screen.backingScaleFactor,
                   dockHeight: max(0, screen.visibleFrame.minY - screen.frame.minY))
+    }
+
+    /// A screen's id: its display's UUID (the same display after a reboot or a replug), else its number.
+    @MainActor static func displayID(of screen: NSScreen) -> String {
+        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        if let number, let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue(),
+           let text = CFUUIDCreateString(nil, uuid) as String? {
+            return text
+        }
+        return number.map { "display-\($0.uint32Value)" } ?? screen.localizedName
     }
 }
 
@@ -130,8 +135,12 @@ struct IslandExtent: Equatable, Sendable {
 /// Which display the island uses (P38): the preferred one while it exists, else the first with a notch, else the
 /// first display; nil with no display at all. Never crashes on 0 screens or a display that went away.
 enum IslandScreenResolver {
-    static func resolve(_ screens: [IslandScreen], preferredID: String?) -> IslandScreen? {
-        if let preferredID, let preferred = screens.first(where: { $0.id == preferredID }) { return preferred }
+    /// `preferredID`: Settings › Island › Display as stored (`IslandDisplayChoice`). Follow focus takes `focusID`, the
+    /// screen with the active window; a chosen screen that is gone, or no focus heard yet, is Automatic: the screen with
+    /// the notch, else the first (P38, P941).
+    static func resolve(_ screens: [IslandScreen], preferredID: String?, focusID: String? = nil) -> IslandScreen? {
+        let wanted = preferredID == IslandDisplayChoice.followFocusID ? focusID : preferredID
+        if let wanted, let preferred = screens.first(where: { $0.id == wanted }) { return preferred }
         return screens.first(where: \.hasNotch) ?? screens.first
     }
 }

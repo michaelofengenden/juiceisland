@@ -95,8 +95,10 @@ extension SessionEngine {
         finishClosed(attention.close(in: sessionID, cause: .superseded) { $0.holdsBridgeSlot }, cause: .superseded)
         let isClaude = session.tool == .claudeCode
         let context = hookNotes.contexts[sessionID]
-        // OpenCode 2's questions show read-only: no answer given here could reach OpenCode (P481).
-        let answers = session.tool != .openCode || OpenCodeAPI.islandAnswers(sessionID: sessionID, isQuestion: kind.isQuestion)
+        // OpenCode 2's questions show read-only: no answer given here could reach OpenCode (P481). So does every request
+        // of an agent the table marks Watch (Amp's waiting thread, P1159): its own prompt decides, never an island answer.
+        let watched = AgentHookTable.spec(agent(of: session))?.answers == .watch
+        let answers = !watched && (session.tool != .openCode || OpenCodeAPI.islandAnswers(sessionID: sessionID, isQuestion: kind.isQuestion))
         // A Claude request follows the Claude rules, the transcript's result for its call included (§2.5): the bridge
         // never holds a subagent's, so the session's transcript is the one (P182).
         var request = AttentionRequest(

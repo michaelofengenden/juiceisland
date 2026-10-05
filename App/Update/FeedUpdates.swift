@@ -20,6 +20,14 @@ public protocol FeedUpdating: AnyObject {
     func install() -> Bool
     /// After `readyToInstall`: quit, install and open the new version.
     func relaunch()
+    /// Settings › About › Install automatically (P1074): on, the updater downloads a new version in the background and
+    /// installs it when the app quits (Sparkle's automatic install); off, nothing downloads before the click. Kept until
+    /// changed, applied when it starts.
+    func setAutomaticInstall(_ on: Bool)
+}
+
+extension FeedUpdating {
+    func setAutomaticInstall(_ on: Bool) {}
 }
 
 /// What the feed's updater says, in the order a run goes.
@@ -43,6 +51,9 @@ public enum FeedUpdateEvent: Equatable, Sendable {
     case installing
     /// The update's session ended: finished, cancelled, or after a failure.
     case ended
+    /// Install automatically downloaded this version in the background: it installs when the app quits, and Restart to
+    /// update installs it now (P1074).
+    case installsOnQuit(version: String)
 }
 
 /// The feed's run as the Update control draws it (P825): the updater's stages on the control's own phases, with words
@@ -91,7 +102,7 @@ struct FeedRun: Equatable, Sendable {
             // The session ended before ready (a failure says why first): nothing runs. Past ready the app is quitting.
             guard phase != .restarting, phase != .restartNeeded else { return }
             self = FeedRun()
-        case .lastChecked, .checking, .found, .upToDate, .failed:
+        case .lastChecked, .checking, .found, .upToDate, .failed, .installsOnQuit:
             break
         }
     }
@@ -187,6 +198,13 @@ final class FeedUpdates {
         self.runningVersion = runningVersion
         self.memory = memory
         self.now = now
+    }
+
+    /// Settings › About › Install automatically, handed to the updater now and whenever it changes (P1074).
+    func followAutomaticInstall(_ settings: AppSettings) {
+        withObservationTracking { updater.setAutomaticInstall(settings.installAutomatically) } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.followAutomaticInstall(settings) }
+        }
     }
 
     /// Joins the two and the updater; the app calls this once, from `UpdateChecker.start`.
@@ -309,6 +327,15 @@ final class FeedUpdates {
             run.apply(event)
             if let offered { memory.save(offered) }
             controller?.feedFollow(run)
+        case let .installsOnQuit(version):
+            // Downloaded by itself: Restart to update installs it now; a quit installs it, and the next launch says so.
+            checker?.installsOnQuit = version
+            offered = version
+            informational = false
+            memory.saveOffered(version)
+            memory.save(version)
+            guard !run.isRunning else { return }
+            checker?.report(.checked(UpdateInfo(newer: 0, subjects: [], version: version, downloaded: true), at: now()))
         default:
             let before = run
             run.apply(event)

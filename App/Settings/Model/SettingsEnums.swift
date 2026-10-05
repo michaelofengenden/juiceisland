@@ -75,19 +75,45 @@ enum HoverFeel: String, CaseIterable, Sendable { case calm, quick }
 /// server (`IslandSurfaceLayers`), so a busy main thread no longer holds the edge. An A/B for the owner, as Motion.
 enum IslandOutline: String, CaseIterable, Codable, Sendable { case swiftUI, coreAnimation }
 
-/// A sound choice: a system sound by name (`NSSound(named:)`), or none.
+/// A sound choice: a system sound by name (`NSSound(named:)`), one of Juice's own (`JuiceSound`, made in code), a file
+/// the owner chose, kept as its path inside the app's `Sounds` folder (`SoundFiles`, P1000 to P1003), or none. Stored as
+/// the name, `juice:<sound>` or `file:<path>`; a system sound's name never holds a colon.
 enum SoundChoice: Equatable, Sendable {
     case none
     case system(String)
+    case juice(JuiceSound)
+    case file(String)
+
+    static let juicePrefix = "juice:"
+    static let filePrefix = "file:"
 
     var storageValue: String {
         switch self {
         case .none: ""
         case let .system(name): name
+        case let .juice(sound): Self.juicePrefix + sound.rawValue
+        case let .file(path): Self.filePrefix + path
         }
     }
 
-    init(storageValue: String) { self = storageValue.isEmpty ? .none : .system(storageValue) }
+    init(storageValue: String) { self = Self(stored: storageValue) ?? .none }
+
+    /// A stored value; nil for one this build cannot play (a Juice sound a later build added, a file with no path), so
+    /// the settings fall back to the event's default rather than to silence.
+    init?(stored value: String) {
+        if value.isEmpty {
+            self = .none
+        } else if value.hasPrefix(Self.juicePrefix) {
+            guard let sound = JuiceSound(rawValue: String(value.dropFirst(Self.juicePrefix.count))) else { return nil }
+            self = .juice(sound)
+        } else if value.hasPrefix(Self.filePrefix) {
+            let path = String(value.dropFirst(Self.filePrefix.count))
+            guard !path.isEmpty else { return nil }
+            self = .file(path)
+        } else {
+            self = .system(value)
+        }
+    }
 }
 
 /// Settings › Accounts › Usage source: standalone Juice's files (read only), or the fictional demo figures.

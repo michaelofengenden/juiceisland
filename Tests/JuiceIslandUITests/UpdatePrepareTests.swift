@@ -6,8 +6,9 @@ import Testing
 /// update-app.sh does: a prepare writes its own status file (`prepared:<commit>` or `failed:<reason>`, and
 /// `failed:stopped` when it is stopped), an install and an update write the update's. A check's result starts a
 /// prepare only with the setting on, on power, for a commit that is not this build's; Restart to update installs what
-/// it left while origin/main is still that commit; an Update stops a prepare first; a quit stops it; a failed prepare
-/// for the same commit is not tried again only when the failure was the commit's own. Nothing is built.
+/// it left while origin/main is still that commit; an Update while a prepare runs starts at once and leaves the
+/// prepare to the updater (P891); a quit stops it; a failed prepare for the same commit is not tried again only when the
+/// failure was the commit's own. Nothing is built.
 @MainActor
 @Suite(.serialized)
 struct UpdatePrepareTests {
@@ -34,8 +35,8 @@ struct UpdatePrepareTests {
                                            logFile: root.appendingPathComponent("logs/update.log"))
             try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
-            // A prepare ends with the line in <script>.result, after <script>.go when <script>.hold is there; TERM ends
-            // it as stopped. With <script>.busy it finds the update lock taken: it writes nothing of its own and exits,
+            // A prepare ends with the line in <script>.result, after <script>.prepare-go when <script>.hold is there;
+            // TERM ends it as stopped. With <script>.busy it finds the update lock taken: it writes nothing of its own and exits,
             // while the run that holds the lock (another bundle's) writes the lines in that file. An install and an
             // update wait at ready (or building) for <script>.go.
             let body = """
@@ -44,14 +45,14 @@ struct UpdatePrepareTests {
             self="$0"
             print -r -- "mode:${JI_RUN_MODE:-update} status:${JI_STATUS_FILE##*/} log:${JI_LOG_FILE##*/} signal:${JI_APP_QUIT_SIGNAL:-none}" >> "$self.calls"
             status_to() { print -r -- "$1" >> "$JI_STATUS_FILE" }
-            step() { local end=$(( SECONDS + \(Int(UpdatePrepareTests.patience) + 30) ))
-              until [[ -e "$self.go" ]] || (( SECONDS > end )); do [[ -e "$self" ]] || exit 0; sleep 0.02; done; rm -f "$self.go" }
+            step() { local go="$self.${1:-go}" end=$(( SECONDS + \(Int(UpdatePrepareTests.patience) + 30) ))
+              until [[ -e "$go" ]] || (( SECONDS > end )); do [[ -e "$self" ]] || exit 0; sleep 0.02; done; rm -f "$go" }
             case ${JI_RUN_MODE:-update} in
               (prepare)
                 [[ ! -e "$self.busy" ]] || { cat "$self.busy" >> "$JI_STATUS_FILE"; exit 1 }
                 trap 'status_to "failed:stopped"; print -r -- "prepare stopped" >> "$self.calls"; exit 1' TERM
                 status_to "app:$2"; status_to pulling; status_to building
-                [[ ! -e "$self.hold" ]] || step
+                [[ ! -e "$self.hold" ]] || step prepare-go
                 status_to "$(<"$self.result")"
                 exit 0 ;;
               (install) status_to "app:$2"; status_to verifying; status_to ready; step; exit 0 ;;
@@ -68,6 +69,8 @@ struct UpdatePrepareTests {
             if let lines { try lines.write(toFile: path, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(atPath: path) }
         }
         func go() { FileManager.default.createFile(atPath: script.path + ".go", contents: nil) }
+        /// Lets a held prepare end.
+        func goPrepare() { FileManager.default.createFile(atPath: script.path + ".prepare-go", contents: nil) }
         func remove() { try? FileManager.default.removeItem(at: root) }
 
         func writePrepare(_ text: String) throws {
@@ -164,8 +167,11 @@ struct UpdatePrepareTests {
         box.go()
     }
 
-    /// An Update while a prepare runs: the prepare stops first (the script's own stop), then the update starts.
-    @Test func anUpdateWhilePreparingStopsThePrepareFirst() async throws {
+    /// An Update while a prepare runs starts at once (P891): the app neither stops the prepare nor waits for it (the
+    /// updater takes it over, or stops it within seconds), and the prepare's status file stays for the updater to
+    /// follow. A quit or the setting turned off while the update runs leaves the prepare to it too; and when the
+    /// prepare ends meanwhile, nothing is offered, prepared or started again.
+    @Test func anUpdateWhilePreparingStartsAtOnceAndLeavesThePrepareToTheUpdater() async throws {
         let box = try Sandbox()
         defer { box.remove() }
         try box.result("prepared:\(Self.tip)")
@@ -176,11 +182,23 @@ struct UpdatePrepareTests {
         #expect(await wait { box.calls.count == 1 })
         controller.start()
         #expect(controller.phase == .pulling)
-        #expect(await wait { box.calls.count == 3 })
-        #expect(box.calls == ["mode:prepare status:update-prepare log:prepare.log signal:none", "prepare stopped",
+        #expect(await wait { box.calls.count == 2 })
+        #expect(box.calls == ["mode:prepare status:update-prepare log:prepare.log signal:none",
                               "mode:update status:update-status log:update.log signal:USR2"])
-        #expect(!controller.preparing && controller.prepared == nil)
-        #expect(controller.phase == .pulling || controller.phase == .building)
+        #expect(controller.preparing && FileManager.default.fileExists(atPath: box.paths.prepareStatusFile.path))
+        controller.stopForQuit()
+        world.enabled = false
+        controller.prepareSettingChanged()
+        world.enabled = true
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(controller.preparing && !box.calls.contains("prepare stopped"))
+        // The prepare ends (the updater installs what it left): nothing offered, no prepare, no second update.
+        box.goPrepare()
+        #expect(await wait { !controller.preparing })
+        controller.considerPreparing()
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(controller.prepared == nil && !controller.restartOffered(for: world.latest))
+        #expect(box.calls.count == 2 && controller.phase.isRunning)
         box.go()
     }
 

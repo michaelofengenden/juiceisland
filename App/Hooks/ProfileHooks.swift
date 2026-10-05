@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import IslandEngine
+import IslandHookNotes
 import JuiceCore
 import Observation
 import OpenIslandCore
@@ -17,6 +18,7 @@ final class ProfileHooks: HooksModel {
     /// Setup's OpenCode row (P480).
     let openCode: OpenCodePluginModel
     private(set) var openIslandRunning = false
+    private(set) var vibeIslandRunning = false
     private(set) var helperInBuild = false
     private var clickRefusals: [String: ProfileHookRefusal] = [:]
     /// Profiles a click has sent to Install, Repair or Remove, from the click until that action ends. The manager
@@ -27,11 +29,15 @@ final class ProfileHooks: HooksModel {
     private var helperClick: HelperUpdate?
     /// The live engine's last hook event per profile; set by the app while Live sessions runs.
     @ObservationIgnored var hookEvents: @MainActor () -> [String: Date] = { [:] }
+    /// A click changed hooks or the OpenCode plugin: the live engine looks again at whether anything of Juice's still
+    /// dials Open Island's socket (P932).
+    @ObservationIgnored var onHooksChanged: @MainActor () -> Void = {}
 
     @ObservationIgnored private let watch: HookDriftMonitor.Watch
     @ObservationIgnored private let schedule: HookDriftMonitor.Schedule
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let isOpenIslandRunning: @MainActor () -> Bool
+    @ObservationIgnored private let isVibeIslandRunning: @MainActor () -> Bool
     @ObservationIgnored private let home: String
     @ObservationIgnored private(set) var monitor: HookDriftMonitor?
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
@@ -41,7 +47,8 @@ final class ProfileHooks: HooksModel {
          watch: @escaping HookDriftMonitor.Watch = { _, _ in nil },
          schedule: @escaping HookDriftMonitor.Schedule = HookDriftMonitor.sleepThenRun,
          now: @escaping @Sendable () -> Date = { Date() },
-         isOpenIslandRunning: @escaping @MainActor () -> Bool = { false }) {
+         isOpenIslandRunning: @escaping @MainActor () -> Bool = { false },
+         isVibeIslandRunning: @escaping @MainActor () -> Bool = { false }) {
         self.manager = manager
         self.directory = directory
         self.home = home
@@ -51,18 +58,20 @@ final class ProfileHooks: HooksModel {
         self.schedule = schedule
         self.now = now
         self.isOpenIslandRunning = isOpenIslandRunning
+        self.isVibeIslandRunning = isVibeIslandRunning
     }
 
-    /// The app's: the helper this bundle carries (`Contents/Helpers/OpenIslandHooks`, bundled by the build), Open
-    /// Island's managed helper path and command strings unchanged, intents in this app's defaults, and Codex's
-    /// current `[features] hooks` key (Codex 0.130 and later; no `codex` is ever run to ask).
+    /// The app's: the helper this bundle carries (`Contents/Helpers/OpenIslandHooks`, bundled by the build), installed
+    /// as the app's own `<home>/bin/JuiceHooks` (P900), intents in this app's defaults, and Codex's current
+    /// `[features] hooks` key (Codex 0.130 and later; no `codex` is ever run to ask).
     static func app(directory: ProfileDirectory) -> ProfileHooks {
-        let manager = ProfileHookManager(bundledHelperURL: HelperSync.bundledHelperURL(), intents: ProfileHookIntentStore(),
-                                         codexFeatureKey: { .current },
+        let manager = ProfileHookManager(bundledHelperURL: HelperSync.bundledHelperURL(), managedHelperURL: HookHome.current.helperURL,
+                                         intents: ProfileHookIntentStore(), codexFeatureKey: { .current },
                                          isOpenIslandAppRunning: { SingleIslandGuard.otherIslandIsRunning() })
         return ProfileHooks(manager: manager, directory: directory, openCode: OpenCodePluginModel(), watch: { target, onChange in
             ConfigFolderWatcher.watch(target, onChange: onChange)
-        }, isOpenIslandRunning: { SingleIslandGuard.otherIslandIsRunning() })
+        }, isOpenIslandRunning: { SingleIslandGuard.otherIslandIsRunning() },
+           isVibeIslandRunning: { SingleIslandGuard.vibeIslandIsRunning() })
     }
 
     // MARK: Reading
@@ -106,6 +115,7 @@ final class ProfileHooks: HooksModel {
 
     private func updateEnvironment() {
         openIslandRunning = isOpenIslandRunning()
+        vibeIslandRunning = isVibeIslandRunning()
         helperInBuild = manager.hasBundledHelper
     }
 
@@ -150,18 +160,19 @@ final class ProfileHooks: HooksModel {
     var integrations: HookIntegrations {
         HookIntegrations(openIslandRunning: openIslandRunning,
                          vibeProfiles: shownTargets.filter { (manager.statuses[$0.id]?.vibeEntryCount ?? 0) > 0 }.count,
-                         helperInBuild: helperInBuild)
+                         helperInBuild: helperInBuild, vibeIslandRunning: vibeIslandRunning)
     }
 
     var lastEvents: [String: Date] { hookEvents() }
 
     var helperUpdate: HelperUpdate? {
         if let helperClick { return helperClick }
-        return manager.helperNeedsUpdate && !openIslandRunning ? .available : nil
+        // Juice's helper is its own (P900): Open Island running no longer holds its Update up.
+        return manager.helperNeedsUpdate ? .available : nil
     }
 
     /// Replaces the managed helper by rename (held helpers keep running the old one to their end), then reads every
-    /// profile again. Refused while Open Island runs (its launch copies its own helper back, P27). The line reads "…"
+    /// profile again. The line reads "…"
     /// until the profiles have been read again: the statuses say "older" until then, and Update must not come back,
     /// enabled, as if the click had failed (P175).
     func updateHelper() {
@@ -186,14 +197,28 @@ final class ProfileHooks: HooksModel {
 
     func clickRefusal(for id: String) -> String? { clickRefusals[id].map(HookRowText.refusal) }
 
+    func readAgain() async {
+        updateEnvironment()
+        await manager.refresh(only: directory.targets)
+        await manager.checkDrift(directory.targets)
+    }
+
     // MARK: OpenCode
 
-    var openCodeRow: OpenCodeSetupRow? { openCode.row(openIslandRunning: openIslandRunning, home: home) }
+    var openCodeRow: OpenCodeSetupRow? { openCode.row(home: home) }
 
     func performOpenCode() {
-        updateEnvironment()
-        let running = openIslandRunning
-        Task { await openCode.perform(openIslandRunning: running) }
+        Task {
+            await openCode.perform()
+            onHooksChanged()
+        }
+    }
+
+    func removeOpenCode() {
+        Task {
+            await openCode.perform(only: .remove)
+            onHooksChanged()
+        }
     }
 
     func refreshOpenCode() {
@@ -220,6 +245,17 @@ final class ProfileHooks: HooksModel {
         }
     }
 
+    /// One action on each profile, in turn: never two installs side by side, which would both copy the helper (P939).
+    func run(_ action: ProfileHookAction, on ids: [String]) {
+        let chosen = ids.compactMap { id in directory.targets.first { $0.id == id && !isBusy(id) } }
+        guard !chosen.isEmpty else { return }
+        for target in chosen { clickRefusals[target.id] = nil }
+        clicked.formUnion(chosen.map(\.id))
+        Task {
+            for target in chosen { await run(action, on: target) }
+        }
+    }
+
     /// The click's one action; a refusal (the preflight reads the files again) or a failed write is kept for its row.
     func run(_ action: ProfileHookAction, on target: ProfileHookTarget) async {
         defer { clicked.remove(target.id) }
@@ -236,5 +272,6 @@ final class ProfileHooks: HooksModel {
             clickRefusals[target.id] = .writeFailed
         }
         updateEnvironment()
+        onHooksChanged()
     }
 }

@@ -8,16 +8,19 @@ import OpenIslandCore
 /// subagent (P350), Allow on the island needs a hold, and the hold takes Codex's own prompt away while it lasts: the TUI
 /// shows only "Running PermissionRequest hook", the Codex app nothing. The opt-in trades that for Allow on the island,
 /// bounded and only while the owner can see it:
-/// - off by default; held only while it is on in Island mode, and only a main-thread shell command or patch in Codex's
-///   `default` mode (`AttentionPolicy.codexHoldable`), read by the broker from the request alone;
+/// - off by default; held only while it is on, and only a main-thread shell command or patch in Codex's `default` mode
+///   (`AttentionPolicy.codexHoldable`), read by the broker from the request alone. In Island mode the island shows its
+///   card; in Window mode the window's Needs you card does (P1050: the window was left out only because it reported no
+///   card, and a hold needs one the owner sees);
 /// - handed back at once, before any card, when the thread's reviewer is Codex's auto review, the turn is under strict
 ///   review, or the reviewer cannot be read (an island Allow would settle what Codex's reviewer decides), or when the owner
 ///   is looking at where Codex asks: the session's own terminal tab in front, the Codex app for its threads, or, where
 ///   the tab probe cannot tell the tab (an IDE, a terminal it does not read, a tmux pane), the host app in front (the
 ///   prompt stays where they look: `Skip.focused`, `look`, P496);
-/// - otherwise confirmed and sounded at once (Codex sends no notice), and held only while the island shows its card: the
-///   Claude subagent hold's rules and bounds (`SubagentHold.showGrace`, `.limit`, the broker's backstop), with the same
-///   ends: a fold, another app, Esc, Open, a jump, another card in its place, Window mode, the switch off;
+/// - otherwise confirmed and sounded at once (Codex sends no notice), and held only while the island or the window shows
+///   its card: the Claude subagent hold's rules and bounds (`SubagentHold.showGrace`, `.limit`, the broker's backstop),
+///   with the same ends: a fold, the window closed, covered or minimised, another app, Esc, Open, a jump, another card in
+///   its place, the switch off;
 /// - an island answer goes over that request's own connection only (P170, P186), as Codex's hook output: Yes is
 ///   `{"behavior":"allow"}` (Codex's "Yes, proceed", once), No `{"behavior":"deny","message":…}` with the owner's reason;
 ///   no Always allow (Codex's hook rejects `updatedPermissions`) and no No and stop (it rejects `interrupt`);
@@ -89,8 +92,8 @@ public enum CodexHold {
 }
 
 extension SessionEngine {
-    /// Settings › Island › Answer Codex on the island, while the app shows as Island (P470). Off: every Codex request is
-    /// handed back at once and shown read-only (decision 15). Turned off, every Codex hold ends at once.
+    /// Settings › Island › Answer Codex on the island (P470), in either mode (P1050). Off: every Codex request is handed
+    /// back at once and shown read-only (decision 15). Turned off, every Codex hold ends at once.
     public var answersCodex: Bool {
         get { codexHoldSwitch.isOn }
         set {

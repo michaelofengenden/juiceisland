@@ -87,6 +87,8 @@ final class IslandPanelController {
     /// (`FullScreenWatch`, P330).
     private var fullScreen = false
     private var fullScreenWatch: FullScreenWatch?
+    /// Where the active window is, heard only while Settings › Island › Display is Follow focus (P941).
+    private var followFocus: FocusScreenWatch?
     /// The request whose card the island last told the sessions it shows (`syncShownRequest`, P350).
     private var reportedShown: String?
     /// Session → the request key of each needs-you heard while the owner was away with Quiet while locked on: the
@@ -124,6 +126,7 @@ final class IslandPanelController {
         if panel == nil { panel = makePanel() }
         watchFocus()
         syncFullScreenWatch()
+        syncFollowFocus()
         observeSessions()
         observeSettings()
         observeMotionSettings()
@@ -178,6 +181,7 @@ final class IslandPanelController {
         focusWatch?.stop()
         focusWatch = nil
         syncFullScreenWatch()
+        syncFollowFocus()
         giveUpKey()
         guard let director, screen != nil else {
             teardown()
@@ -362,6 +366,8 @@ final class IslandPanelController {
         case .resetAfterFold:
             guard !ui.isOpen else { return }
             resetPending = false
+            // Follow focus catches up once the fold has ended, after the director's own turn, never inside it.
+            defer { if followFocus != nil { Task { @MainActor [weak self] in self?.followFocusMoved() } } }
             if case let .card(id) = ui.presentation, QuotaNoticeCard.isNotice(id) { env.islandNotice = nil }
             ui.presentation = .list
             // A card built ahead that the island never showed goes with the rest.
@@ -388,7 +394,38 @@ final class IslandPanelController {
     }
 
     private func resolveScreen() -> IslandScreen? {
-        IslandScreenResolver.resolve(NSScreen.screens.map(IslandScreen.init), preferredID: env.settings.islandDisplay)
+        let screens = NSScreen.screens.map(IslandScreen.init)
+        return IslandScreenResolver.resolve(screens, preferredID: env.settings.islandDisplay, focusID: focusScreenID(in: screens))
+    }
+
+    // MARK: Follow focus
+
+    /// Follow focus's screen: the active window's, once the island is closed and the pointer is off it, so it never moves
+    /// out from under the owner (it follows at the fold, or when the pointer leaves); the island's own screen until a
+    /// window is heard. nil for any other choice.
+    private func focusScreenID(in screens: [IslandScreen]) -> String? {
+        guard env.settings.islandDisplay == IslandDisplayChoice.followFocusID else { return nil }
+        return FocusScreenProbe.target(heard: followFocus?.screenID, current: screen?.id,
+                                       held: machine.phase != .closed || pointerInside, screens: screens)
+    }
+
+    /// A watch on the active window's screen while the island shows and Follow focus is chosen; none otherwise, so
+    /// nothing reads the window list for any other choice (P941).
+    private func syncFollowFocus() {
+        guard shown, env.settings.islandDisplay == IslandDisplayChoice.followFocusID else {
+            followFocus?.stop()
+            followFocus = nil
+            return
+        }
+        guard followFocus == nil else { return }
+        followFocus = FocusScreenWatch(probe: { FocusScreenProbe.now() }) { [weak self] _ in self?.followFocusMoved() }
+    }
+
+    /// The active window went to another screen, the island folded, or the pointer left it: the island goes to that
+    /// screen, as a change of display moves it (snapped, P38), once nothing holds it where it is.
+    private func followFocusMoved() {
+        guard followFocus != nil, shown, let current = screen, let target = resolveScreen(), target.id != current.id else { return }
+        displayChanged()
     }
 
     /// A display came, went or changed (P38): no screen, and the panel just leaves; a screen back, and the island is
@@ -463,6 +500,7 @@ final class IslandPanelController {
         if inside != pointerInside {
             pointerInside = inside
             feed(inside ? .pointerEntered(at: t) : .pointerExited(at: t))
+            if !inside { followFocusMoved() }
         }
         if inside, kind == .moved { feed(.pointerMoved(speed: speed, at: t)) }
         updatePolling(location)
@@ -653,7 +691,8 @@ final class IslandPanelController {
     /// one goes.
     private func mountNextWaiting() {
         guard machine.phase == .open, case let .card(shown) = ui.presentation, restingCard == shown else { return }
-        if let next = IslandAttention.buildAhead(shown: shown, waits: showsCardThatWaits, waiting: env.sessions.waiting) {
+        if let next = IslandAttention.buildAhead(shown: shown, waits: showsCardThatWaits,
+                                                 waiting: BatchAnswer.stillWaiting(env.sessions.waiting, env: env)) {
             mountAhead(next)
         } else if let ahead = ui.aheadCard, env.card(for: ahead.sessionID) == nil {
             ui.aheadCard = nil
@@ -767,7 +806,8 @@ final class IslandPanelController {
             // Answered: the next card that waits, oldest first, while the island is open; the list (or a close, the
             // pointer away) once none remain (P130).
             let wasWaiting = previous.first { $0.id == gone }?.hasCard == true
-            if machine.isOpen, let next = IslandAttention.next(after: gone, wasWaiting: wasWaiting, waiting: env.sessions.waiting) {
+            if machine.isOpen, let next = IslandAttention.next(after: gone, wasWaiting: wasWaiting,
+                                                               waiting: BatchAnswer.stillWaiting(env.sessions.waiting, env: env)) {
                 present(.card(sessionID: next))
                 feed(.attention(at: IslandMotionDirector.now))
             } else {
@@ -778,7 +818,8 @@ final class IslandPanelController {
             // The request the card showed went and the same session's next one (or its finished turn) took its place, or
             // a Done card became a request: never drawn in place as if it were the card the owner was at (P172).
             let current = env.card(for: id)
-            switch IslandAttention.shownCardChanged(drawn: drawn, current: current, waiting: env.sessions.waiting) {
+            switch IslandAttention.shownCardChanged(drawn: drawn, current: current,
+                                                    waiting: BatchAnswer.stillWaiting(env.sessions.waiting, env: env)) {
             case let .next(next):
                 present(.card(sessionID: next))
                 feed(.attention(at: IslandMotionDirector.now))
@@ -1197,6 +1238,7 @@ final class IslandPanelController {
     private func settingsChanged() {
         ui.stripOpen = false
         syncFullScreenWatch()
+        syncFollowFocus()
         restAgain()
     }
 
@@ -1216,9 +1258,12 @@ final class IslandPanelController {
 
     // MARK: Quiet
 
-    /// Nothing opens the island by itself now: full screen with Hide in full screen on, or Quiet hours on the wall clock
-    /// (`QuietMode`, P331). Read as each batch or notice comes, never on a timer.
-    private var holdsAttention: Bool { QuietMode.holdsAttention(env.settings, fullScreen: fullScreen, now: Date()) }
+    /// Nothing opens the island by itself now: full screen with Hide in full screen on, Quiet hours on the wall clock
+    /// (`QuietMode`, P331), the screen mirrored with Quiet while presenting on or a Focus that quiets (`QuietScenes`,
+    /// P1005, P1006). Read as each batch or notice comes, never on a timer.
+    private var holdsAttention: Bool {
+        QuietMode.holdsAttention(env.settings, fullScreen: fullScreen, scene: env.quietScenes?.now() ?? .none, now: Date())
+    }
 
     /// Quiet while locked holds the island now: the screen is locked or the owner's session switched out (P422).
     private var lockQuiets: Bool { QuietMode.lockQuiets(env.settings, away: env.screenLock?.isAway == true) }
@@ -1340,8 +1385,13 @@ final class IslandPanelController {
         // The one card a card key acts on, what the owner sees (P351), and its exact request (P170, P172).
         let card = IslandKeyRouter.targetCard(presentation: ui.presentation, sessions: env.sessions, showAll: ui.showAll,
                                               drawn: shownCard, selected: ui.selectedRow)
+        // Allow all answers from the approval card on show only, as its row there does (P1031).
+        let batch = ui.presentation == .list ? [] : BatchAnswer.islandTargets(drawn: card, env: env)
         guard let command = IslandKeyRouter.command(for: key, card: card, arriving: ui.arrivingCard,
-                                                    listing: ui.presentation == .list) else { return false }
+                                                    listing: ui.presentation == .list, keys: env.settings.cardKeys,
+                                                    switchBack: ui.switching ? GlobalKeyAction.backKey(env.settings) : nil,
+                                                    batch: batch.count, batchArriving: BatchAnswer.justArrived(batch, env: env))
+        else { return false }
         switch command {
         case .close:
             feed(.dismissed)
@@ -1368,6 +1418,13 @@ final class IslandPanelController {
             openSelection()
         case .cycleUsage:
             cycleUsage()
+        case let .answerAll(decision):
+            BatchAnswer.answer(decision, batch, env: env)
+        case .switchBack:
+            // ⇧ with the system-wide key in Switch sessions (P1033): the ring goes back a row, the last of all after the first.
+            if ui.presentation != .list { present(.list) }
+            select(RowSelection.islandSwitchBack(ui.selectedRow, sessions: env.sessions, style: env.settings.islandStyle,
+                                                 showAll: ui.showAll))
         case .swallow:
             break
         }

@@ -15,6 +15,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     /// sleeping or locked display (P89). Ordered out (closed, or folded into the island) it draws nothing at all.
     let motion = SurfaceMotion(.hidden)
     private var motionWatch: SurfaceMotionWatch?
+    /// Tells the engine which requests' cards the window shows the owner (P1050): a Codex request held for its card is
+    /// answered from the window as from the island.
+    private var attentionWatch: WindowAttentionWatch?
     /// The fold into the island while it plays.
     private var foldInFlight: WindowFold.Handle?
 
@@ -57,6 +60,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.center()
         window.setFrameAutosaveName("JuiceIslandMainWindow")
         motionWatch = SurfaceMotionWatch(window: window, motion: motion)
+        attentionWatch = WindowAttentionWatch(env: env, motion: motion)
         observeTheme()
     }
 

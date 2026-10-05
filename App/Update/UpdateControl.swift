@@ -7,7 +7,8 @@ enum UpdateControlState: Equatable, Sendable {
     case hidden
     /// An update is offered: "Update", or "Restart to update" once a background prepare has it built (P711).
     case offer(restart: Bool)
-    /// A run: its words inside ("Fetching", "Building 63%", "Installing") over the fill (`fraction`, the whole run).
+    /// A run: its words inside ("Fetching", "Waiting for build", "Building 63%", "Still building", "Installing") over the
+    /// fill (`fraction`, the whole run).
     case running(words: String, fraction: Double)
     /// Built and checked: the fill completes, "Updated" with a check, a brief glow, then the relaunch.
     case finished
@@ -27,8 +28,8 @@ enum UpdateControlState: Equatable, Sendable {
 
     static func of(available: UpdateInfo?, phase: UpdatePhase, prepared: Bool, progress: UpdateProgress) -> UpdateControlState {
         switch phase {
-        case .pulling, .building, .installing:
-            .running(words: UpdateText.runWords(phase, progress: progress) ?? "", fraction: progress.fraction)
+        case .pulling, .waiting, .settingUp, .building, .installing:
+            .running(words: UpdateText.controlWords(phase, progress: progress) ?? "", fraction: progress.fraction)
         case .restarting: .finished
         case .restartNeeded: .restartNeeded
         case let .failed(reason): .failed(reason: reason)
@@ -77,13 +78,16 @@ enum UpdateControlState: Equatable, Sendable {
         if case .failed = self { place == .toolbar } else { false }
     }
 
-    /// The tooltip and the spoken label: what it says, and what a click does.
+    /// The tooltip and the spoken label: what it says, in full (P898), and what a click does.
     func help(available: UpdateInfo?, progress: UpdateProgress, place: Place) -> String {
         switch self {
         case .hidden: return ""
         case let .offer(restart): return available.map { UpdateText.toolbarHelp($0, prepared: restart) } ?? words
         case let .running(words, _):
-            let parts = [words, UpdateText.timeLeft(progress).map { $0.prefix(1).lowercased() + $0.dropFirst() }].compactMap(\.self)
+            let full = UpdateText.fullWords(words, progress: progress)
+            // "Still building, the Mac is busy" says the time's reason already.
+            let left = progress.overran && progress.busy ? nil : UpdateText.timeLeft(progress)
+            let parts = [full, left.map { $0.prefix(1).lowercased() + $0.dropFirst() }].compactMap(\.self)
             return parts.joined(separator: " · ") + (place == .toolbar ? " · click for details" : "")
         case .finished: return "Updated · restarting"
         case .restartNeeded: return "The update is built · click to restart"

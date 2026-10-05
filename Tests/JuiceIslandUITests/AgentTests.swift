@@ -142,9 +142,9 @@ struct AgentFixtureTests {
     typealias ID = FixtureSessionFeed.AgentID
 
     static let expected: [String: AgentTool] = [
-        ID.openCodeApproval: .openCode, ID.kimiApproval: .kimiCLI, ID.qwenQuestion: .qwenCode, ID.geminiRunning: .geminiCLI,
+        ID.openCodeApproval: .openCode, ID.qoderApproval: .qoder, ID.qwenQuestion: .qwenCode, ID.geminiRunning: .geminiCLI,
         ID.cursorRunning: .cursor, ID.piRunning: .pi, ID.geminiDone: .geminiCLI, ID.openCodeDone: .openCode,
-        ID.factoryDone: .factory, ID.grokDone: .grokBuild, ID.qoderDone: .qoder, ID.codebuddyDone: .codebuddy,
+        ID.factoryDone: .factory, ID.grokDone: .grokBuild, ID.kimiDone: .kimiCLI, ID.codebuddyDone: .codebuddy,
         ID.ohMyPiDone: .ohMyPi,
     ]
 
@@ -167,10 +167,10 @@ struct AgentFixtureTests {
     func aSessionIsTitledByItsFirstPromptNeverByItsAgent() {
         let model = FixtureSessionFeed(scenario: .agents).makeModel()
         let expected: [String: String] = [
-            ID.kimiApproval: "clean the build", ID.factoryDone: "check the release script", ID.qwenQuestion: "pick a chart",
+            ID.qoderApproval: "clean the build", ID.factoryDone: "check the release script", ID.qwenQuestion: "pick a chart",
             ID.geminiRunning: "tighten the intro", ID.ohMyPiDone: "sum the invoices", ID.openCodeDone: "sort the notes",
             ID.openCodeApproval: "push the fix", ID.cursorRunning: "run the tests", ID.piRunning: "read the results",
-            ID.geminiDone: "draft the setup page", ID.grokDone: "rename the screenshots", ID.qoderDone: "list the open issues",
+            ID.geminiDone: "draft the setup page", ID.grokDone: "rename the screenshots", ID.kimiDone: "list the open issues",
             ID.codebuddyDone: "fix the links",
         ]
         for (id, title) in expected {
@@ -192,7 +192,7 @@ struct AgentFixtureTests {
         #expect(model.row(id: ID.geminiDone)?.lastPrompt == "draft the setup page")
         #expect(model.row(id: ID.openCodeDone)?.detail == "Sorted the notes by date and merged the two March files.")
         #expect(model.row(id: ID.factoryDone)?.detail == "The release script tags juice-0.4-1 and pushes only to the private origin.")
-        #expect(model.row(id: ID.qoderDone)?.detail == "Seven issues are open; two are labelled bug.")
+        #expect(model.row(id: ID.kimiDone)?.detail == "Seven issues are open; two are labelled bug.")
         #expect(model.row(id: ID.ohMyPiDone)?.detail == "The invoices come to 1,240 in March.")
         #expect(model.row(id: ID.geminiRunning)?.lastPrompt == "tighten the intro")
         #expect(model.row(id: ID.cursorRunning)?.lastPrompt == "run the tests")
@@ -256,7 +256,7 @@ struct AgentFixtureTests {
     func countsAndColumnsIncludeEveryAgent() {
         let model = FixtureSessionFeed(scenario: .agents).makeModel()
         #expect(model.needsYouCount == 3)
-        #expect(Set(model.needsYou.map(\.id)) == [ID.openCodeApproval, ID.kimiApproval, ID.qwenQuestion])
+        #expect(Set(model.needsYou.map(\.id)) == [ID.openCodeApproval, ID.qoderApproval, ID.qwenQuestion])
         #expect(model.runningCount == 3)
         #expect(PillSummary.make(rows: model.rows, countMode: .needsYou, now: model.now).count == 3)
         #expect(PillSummary.make(rows: model.rows, countMode: .active, now: model.now).count == 10)
@@ -321,15 +321,15 @@ struct AgentFixtureTests {
     }
 
     /// A fork's request is upstream's decoding of Claude's payload with its `hook_source`: its tool, and its own
-    /// sentence ("Kimi CLI wants to run Bash.").
+    /// sentence ("Qoder wants to run Bash.").
     @Test
     func aForksRequestIsUpstreamsDecodingOfItsPayload() throws {
         let feed = FixtureSessionFeed(scenario: .agents)
-        let session = try #require(feed.engine.state.session(id: ID.kimiApproval))
-        #expect(session.tool == .kimiCLI)
+        let session = try #require(feed.engine.state.session(id: ID.qoderApproval))
+        #expect(session.tool == .qoder)
         let request = try #require(session.permissionRequest)
-        #expect(request.summary == "Kimi CLI wants to run Bash.")
-        #expect(request.affectedPath == FixtureSessionFeed.kimiCommand)
+        #expect(request.summary == "Qoder wants to run Bash.")
+        #expect(request.affectedPath == FixtureSessionFeed.forkCommand)
         #expect(feed.engine.state.session(id: ID.qwenQuestion)?.tool == .qwenCode)
         #expect(feed.engine.state.session(id: ID.factoryDone)?.tool == .factory)
     }
@@ -480,19 +480,20 @@ struct AgentCardTests {
     }
 
     /// A Claude Code fork's approval is Claude's: the request's own command until a transcript under a `projects`
-    /// folder has it (Kimi's has not), and its sentence ("Kimi CLI wants to run Bash.") never shown.
+    /// folder has it (Qoder's has not), and its sentence ("Qoder wants to run Bash.") never shown. Qoder is Approve, so
+    /// its Yes goes back; a Watch fork's would not (P1135).
     @Test
     func aForksApprovalReadsAsClaudesDoes() async {
         let feed = FixtureSessionFeed(scenario: .agents)
         let model = feed.makeModel()
-        guard case let .approval(card)? = model.card(for: ID.kimiApproval) else { Issue.record("no card"); return }
-        #expect(card.agent == .other(.kimiCLI))
-        #expect(card.body == .command(FixtureSessionFeed.kimiCommand))
+        guard case let .approval(card)? = model.card(for: ID.qoderApproval) else { Issue.record("no card"); return }
+        #expect(card.agent == .other(.qoder))
+        #expect(card.body == .command(FixtureSessionFeed.forkCommand))
         #expect(card.reason == nil)
         #expect(!card.canStop)
-        await model.decide(ID.kimiApproval, .allowOnce)
+        await model.decide(ID.qoderApproval, .allowOnce)
         guard case let .resolvePermission(session, resolution)? = feed.sentCommands.first else { Issue.record("nothing sent"); return }
-        #expect(session == ID.kimiApproval)
+        #expect(session == ID.qoderApproval)
         #expect(resolution == .allowOnce())
     }
 
@@ -570,8 +571,8 @@ struct AgentCardTests {
     @Test
     func theCardsSayTheAgentsName() {
         let model = FixtureSessionFeed(scenario: .agents).makeModel()
-        guard case let .approval(card)? = model.card(for: ID.kimiApproval) else { Issue.record("no card"); return }
-        #expect(card.agent.displayName == "Kimi")
+        guard case let .approval(card)? = model.card(for: ID.qoderApproval) else { Issue.record("no card"); return }
+        #expect(card.agent.displayName == "Qoder")
         guard case let .done(done)? = model.card(for: ID.openCodeDone) else { Issue.record("no card"); return }
         #expect(done.agent.displayName == "OpenCode")
     }

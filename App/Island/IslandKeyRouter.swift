@@ -56,6 +56,11 @@ enum IslandKeyCommand: Equatable, Sendable {
     case openSelection
     /// U over the list: the usage block's next battery (`UsageCycle`, P461).
     case cycleUsage
+    /// Allow all (Yes) or Deny all (No) on an approval card while two or more wait: each approval `BatchAnswer` covers,
+    /// as its own Yes or No would (P1031).
+    case answerAll(ApprovalDecision)
+    /// ⇧ and the system-wide key while it switches sessions: the ring goes back a row (P1033).
+    case switchBack
     /// Eaten: ⌘Q never reaches the app menu, so it cannot quit from the island (P39); a card key's auto-repeat never
     /// answers the card that took the answered one's place, nor does any key a card that has just come in (P138); a
     /// held Return's repeats open nothing and submit no field (P322).
@@ -65,7 +70,8 @@ enum IslandKeyCommand: Equatable, Sendable {
     var sessionID: String? {
         switch self {
         case let .approve(id, _), let .chooseOption(id, _): id
-        case .close, .jumpToNextNeedsYou, .showAsWindow, .openSettings, .moveSelection, .openSelection, .cycleUsage, .swallow: nil
+        case .close, .jumpToNextNeedsYou, .showAsWindow, .openSettings, .moveSelection, .openSelection, .cycleUsage, .answerAll,
+             .switchBack, .swallow: nil
         }
     }
 }
@@ -79,16 +85,24 @@ enum IslandKeyCommand: Equatable, Sendable {
 /// field's, as in the window (P138): typing why the answer is No never turns it into a Yes. A held key's repeats
 /// answer nothing, nor does any key a card that has just come in: the next card that waits takes the answered one's
 /// place within tens of milliseconds (P130), so either would answer a card the owner never saw (P138); they are eaten.
+/// The card keys are Settings › Shortcuts' (`CardKeys`, P1025 to P1030): one modifier, Control or Option, each action's
+/// recorded or standard key, all of them off with Keyboard shortcuts; with Option a field being edited keeps every key.
 enum IslandKeyRouter {
     /// `card`: the one card a card key acts on (`targetCard`); nil, and a card key does nothing.
     /// `arriving`: the card that has just come in (`IslandUIState.arrivingCard`), which no key answers yet (P138).
     /// `listing`: the island shows its list, where ↑, ↓ and Return move and open the keys' row (P321); over a card
     /// they are the card's.
-    static func command(for key: IslandKeyPress, card: SessionCard?, arriving: String? = nil,
-                        listing: Bool = false) -> IslandKeyCommand? {
+    /// `keys`: Settings › Shortcuts (`AppSettings.cardKeys`). `switchBack`: the system-wide key with ⇧ while the island
+    /// switches sessions (`GlobalKeyAction.backKey`), else nil. `batch`: how many approvals Allow all would answer from the
+    /// card on show (`BatchAnswer.islandTargets`), 0 when it shows no Allow all; `batchArriving`: one of them has just
+    /// come in (`BatchAnswer.justArrived`), and Allow all's key is eaten (P1032).
+    static func command(for key: IslandKeyPress, card: SessionCard?, arriving: String? = nil, listing: Bool = false,
+                        keys: CardKeys = .standard, switchBack: KeyCombo? = nil, batch: Int = 0,
+                        batchArriving: Bool = false) -> IslandKeyCommand? {
         guard !key.hasMarkedText else { return nil }
         let character = key.characters.lowercased()
 
+        if let switchBack, !key.editing, pressed(key) == switchBack { return key.isRepeat ? .swallow : .switchBack }
         if key.command {
             if character == "q" { return .swallow }
             if character == "i", key.shift, !key.control, !key.option { return .showAsWindow }
@@ -96,27 +110,49 @@ enum IslandKeyRouter {
             return nil
         }
         if key.characters == "\u{1b}", !key.control, !key.option { return .close }
-        if let command = listCommand(key, listing: listing) { return command }
-        guard key.control, !key.option else { return nil }
-        if character == "g", !key.shift { return .jumpToNextNeedsYou }
-        if key.editing, character == "a" || character == "d" { return nil }
-        guard let card, let command = cardCommand(character, shift: key.shift, card: card) else { return nil }
+        if let command = listCommand(key, listing: listing, keys: keys) { return command }
+        guard keys.enabled, keys.holdsModifier(control: key.control, option: key.option, command: key.command) else { return nil }
+        let action = keys.action(character, shift: key.shift)
+        if key.editing, !keys.takesWhileEditing(action) { return nil }
+        if action == .jump { return .jumpToNextNeedsYou }
+        if action == .allowAll || action == .denyAll {
+            guard batch >= BatchAnswer.minimum, case .approval? = card else { return nil }
+            return key.isRepeat || card?.sessionID == arriving || batchArriving
+                ? .swallow : .answerAll(action == .allowAll ? .allowOnce : .deny)
+        }
+        guard let card, let command = cardCommand(character, action: action, card: card) else { return nil }
         return key.isRepeat || command.sessionID == arriving ? .swallow : command
     }
 
-    private static func cardCommand(_ character: String, shift: Bool, card: SessionCard) -> IslandKeyCommand? {
+    /// The press as the system-wide key's recorder would have it, to match a recorded key.
+    static func pressed(_ key: IslandKeyPress) -> KeyCombo? {
+        var flags: NSEvent.ModifierFlags = []
+        if key.control { flags.insert(.control) }
+        if key.option { flags.insert(.option) }
+        if key.shift { flags.insert(.shift) }
+        if key.command { flags.insert(.command) }
+        return KeyCombo.from(characters: key.characters, modifiers: flags)
+    }
+
+    private static func cardCommand(_ character: String, action: CardKeyAction?, card: SessionCard) -> IslandKeyCommand? {
         // A read-only card answers nothing: its agent's own prompt is where it is answered.
         guard card.isAnswerable else { return nil }
         switch card {
         case let .approval(model):
-            if character == "a" {
-                if shift { return model.alwaysAllowLabel == nil ? nil : .approve(sessionID: model.sessionID, .alwaysAllow) }
-                return .approve(sessionID: model.sessionID, .allowOnce)
+            switch action {
+            case .allow: return .approve(sessionID: model.sessionID, .allowOnce)
+            case .alwaysAllow: return model.alwaysAllowLabel == nil ? nil : .approve(sessionID: model.sessionID, .alwaysAllow)
+            case .deny: return .approve(sessionID: model.sessionID, .deny)
+            case .denyAndStop: return model.canStop ? .approve(sessionID: model.sessionID, .denyAndStop) : nil
+            default: return nil
             }
-            if character == "d" { return deny(model.sessionID, stop: shift, canStop: model.canStop) }
         case let .plan(model):
-            if character == "a", !shift { return .approve(sessionID: model.sessionID, .allowOnce) }
-            if character == "d" { return deny(model.sessionID, stop: shift, canStop: model.canStop) }
+            switch action {
+            case .allow: return .approve(sessionID: model.sessionID, .allowOnce)
+            case .deny: return .approve(sessionID: model.sessionID, .deny)
+            case .denyAndStop: return model.canStop ? .approve(sessionID: model.sessionID, .denyAndStop) : nil
+            default: return nil
+            }
         case let .question(model):
             if let digit = Int(character), (1...4).contains(digit), digit <= model.options.count {
                 return .chooseOption(sessionID: model.sessionID, index: digit - 1)
@@ -138,21 +174,15 @@ enum IslandKeyRouter {
     /// repeats are eaten wherever they land: the first opens a row's card, and a repeat must not then submit the field
     /// that card focused, nor open the next row (P322). U (Shift or not) steps through the usage (P461); a held U's
     /// repeats are eaten, so the block does not flicker through every battery and fold.
-    private static func listCommand(_ key: IslandKeyPress, listing: Bool) -> IslandKeyCommand? {
+    private static func listCommand(_ key: IslandKeyPress, listing: Bool, keys: CardKeys) -> IslandKeyCommand? {
         guard !key.control, !key.option, !key.command else { return nil }
         let isReturn = returnKeys.contains(key.characters)
         if isReturn, key.isRepeat { return .swallow }
-        if listing, !key.editing, key.characters.lowercased() == usageKey { return key.isRepeat ? .swallow : .cycleUsage }
+        if keys.enabled, listing, !key.editing, key.characters.lowercased() == usageKey { return key.isRepeat ? .swallow : .cycleUsage }
         guard listing, !key.editing, !key.shift else { return nil }
         if key.characters == upArrow { return .moveSelection(-1) }
         if key.characters == downArrow { return .moveSelection(1) }
         return isReturn ? .openSelection : nil
-    }
-
-    /// ⌃D is No; ⌃⇧D is No and stop, only where the agent can stop (Claude).
-    private static func deny(_ sessionID: String, stop: Bool, canStop: Bool) -> IslandKeyCommand? {
-        guard stop else { return .approve(sessionID: sessionID, .deny) }
-        return canStop ? .approve(sessionID: sessionID, .denyAndStop) : nil
     }
 
     /// The one card a card key acts on: what the owner sees (P351), never another card behind it, so a key the card it

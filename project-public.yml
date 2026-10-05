@@ -11,8 +11,8 @@ name: Juice
 # everything it draws is the SwiftPM library JuiceIslandUI, as in the private app. Info.plist says `JIFlavor: public`,
 # which `AppFlavor` reads: the product's name in every text, its own folders and log, and its own bundle id counted as
 # the release build. Sparkle checks https://github.com/<PUBLIC_REPO>/releases/latest/download/appcast.xml once a day and
-# on Check now, verifies each download against the EdDSA key, downloads nothing before the click, and shows no window of
-# its own.
+# on Check now, verifies each download against the EdDSA key, downloads nothing before the click (unless Install
+# automatically is on), and shows no window of its own.
 
 options:
   deploymentTarget:
@@ -58,6 +58,8 @@ targets:
     sources:
       - path: PublicApp
       - path: App/Main/Resources
+      # The Focus filter (P1006), the private app's own file, so both flavors' App Intents metadata lists it.
+      - path: App/Main/QuietFocusFilter.swift
     dependencies:
       - package: JuiceIsland
         product: JuiceIslandUI
@@ -91,13 +93,15 @@ targets:
         JIProductName: Juice
         JIPublicRepo: $(JI_PUBLIC_REPO)
         # Sparkle: the feed and its key; a check once a day with no question first; nothing downloaded or installed
-        # before the click; no system profile sent; the download's EdDSA signature checked before it is unpacked.
+        # before the click unless the owner turns on Settings › About › Install automatically (P1074), which the app
+        # hands Sparkle at each start (automatic downloads are allowed, off by default); no system profile sent; the
+        # download's EdDSA signature checked before it is unpacked.
         SUFeedURL: https://github.com/$(JI_PUBLIC_REPO)/releases/latest/download/appcast.xml
         SUPublicEDKey: $(JI_SPARKLE_PUBLIC_KEY)
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUAutomaticallyUpdate: false
-        SUAllowsAutomaticUpdates: false
+        SUAllowsAutomaticUpdates: true
         SUEnableSystemProfiling: false
         SUVerifyUpdateBeforeExtraction: true
     entitlements:

@@ -148,18 +148,33 @@ enum GlassFrost {
     /// `widgetMaximum` at 1. The floor is there at every Frost: the glass's dark face over a white window is #B4B4B4
     /// (`GlassFaceModel.dark`), where white text is 2.1:1, and half of #242427 makes it #6C6C6E, where white text holds
     /// 5.2:1 and Widget's ink its ratios (`GlassTone.widget`). The wallpaper's colour still shows through, as the
-    /// widgets' does: the owner's lavender comes out #535475.
+    /// widgets' does: the owner's lavender comes out #535475. Over the apps' windows only (the island, the Settings
+    /// preview): the desktop panel sits on the wallpaper, never over a window.
     static let widgetFloor = 0.5
+    /// The desktop panel's floor while macOS dims its widgets (an app in front, P1214): a tenth of the dark ground, so
+    /// the panel dims with the widgets and keeps the wallpaper's colour, as they do. The only measured dimmed widget
+    /// (lavender #8A8CC8 under it came out #6F6FC4, P872) is ΔE 15.7 from the dark face alone, 17.1 at a tenth and 32.2
+    /// at the half; over the dimmed widgets' model a tenth is the closest (mean ΔE 9.4, against 10.1 with none).
+    static let widgetDimmedFloor = 0.1
     static let widgetMaximum = 0.6
 
-    /// The veil for `frost` in Glass look `look`: Light and dark's as ever (`colour(_:)`); Widget's the dark ground from
-    /// `widgetFloor` to `widgetMaximum`, in either scheme.
-    static func colour(_ frost: Double, look: GlassLookChoice) -> Color {
-        look == .widget ? dark.opacity(widgetOpacity(frost)) : colour(frost)
+    /// The veil for `frost` in Glass look `look`: Light and dark's as ever (`colour(_:)`); Widget's the dark ground, in
+    /// either scheme, from the floor of the state it is in (`widgetOpacity`).
+    static func colour(_ frost: Double, look: GlassLookChoice, state: WidgetGlassState = .overApps) -> Color {
+        look == .widget ? dark.opacity(widgetOpacity(frost, state: state)) : colour(frost)
     }
 
-    /// Widget's veil's strength at `frost`.
-    static func widgetOpacity(_ frost: Double) -> Double { widgetFloor + stored(frost) * (widgetMaximum - widgetFloor) }
+    /// Widget's veil's strength at `frost`: from the state's floor at 0 to `widgetMaximum` at 1. Over the apps
+    /// `widgetFloor`; on the desktop with the widgets dimmed `widgetDimmedFloor`; in full colour nothing (the widgets'
+    /// own glass, the wallpaper's colour, P1205). Frost adds only the depth the owner asks for.
+    static func widgetOpacity(_ frost: Double, state: WidgetGlassState = .overApps) -> Double {
+        let floor = switch state {
+        case .overApps: widgetFloor
+        case .dimmed: widgetDimmedFloor
+        case .fullColour: 0.0
+        }
+        return floor + stored(frost) * (widgetMaximum - floor)
+    }
 }
 
 // MARK: The pointer-lit rim

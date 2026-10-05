@@ -7,9 +7,11 @@ public enum OpenCodeAPI: Equatable, Sendable {
     case one, two
 
     public static let twoPrefix = "opencode2-"
+    /// Kilo's copy of the plugin names its OpenCode 2 sessions `kilo2-…` (P923).
+    public static let kiloTwoPrefix = "kilo2-"
 
     public static func of(sessionID: String) -> OpenCodeAPI {
-        sessionID.hasPrefix(twoPrefix) ? .two : .one
+        sessionID.hasPrefix(twoPrefix) || sessionID.hasPrefix(kiloTwoPrefix) ? .two : .one
     }
 
     /// Whether the island may answer an OpenCode request itself (P481). An approval: yes, under either API (OpenCode 1's

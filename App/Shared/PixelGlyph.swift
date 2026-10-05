@@ -1,3 +1,4 @@
+import IslandHookNotes
 import OpenIslandCore
 import SwiftUI
 
@@ -155,6 +156,8 @@ enum GlyphPalette {
     enum Agent: Hashable, Sendable {
         case claude, codex
         case other(AgentTool)
+        /// An agent the engine files under another tool and labels from its hooks: Copilot CLI, Devin CLI, Kilo (P913).
+        case kind(AgentKind)
     }
 
     /// `delegating`: the main turn waits on its subagents (the `agents` glyph).

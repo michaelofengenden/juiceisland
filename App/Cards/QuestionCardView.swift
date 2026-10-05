@@ -144,6 +144,7 @@ struct QuestionOptionButton: View {
     let action: () -> Void
     @Environment(\.cardHovered) private var cardHovered
     @Environment(\.showsShortcutHints) private var showsHints
+    @Environment(\.cardKeys) private var keys
     /// Settings › Island › Text size (P402): the title and the description; the badge and the key hint keep theirs.
     @Environment(\.islandSize) private var islandSize
 
@@ -174,8 +175,8 @@ struct QuestionOptionButton: View {
                     CheckIcon(colour: palette.tone(needsYou.wait))
                 } else if cardHovered {
                     ChevronRightIcon(colour: palette.optionChevron)
-                } else if showsHints, index < 4 {
-                    Text("⌃\(index + 1)").font(Fonts.sys(10.5)).foregroundStyle(palette.cardKbd).fixedSize()
+                } else if showsHints, let hint = keys.optionHint(index) {
+                    Text(hint).font(Fonts.sys(10.5)).foregroundStyle(palette.cardKbd).fixedSize()
                 }
             }
             .padding(.vertical, 6)
@@ -189,14 +190,14 @@ struct QuestionOptionButton: View {
         .buttonStyle(.plain)
         // Glass: each option the regular interactive glass, the picked or hovered one a veil on it (P640).
         .cardControlGlass(RoundedRectangle(cornerRadius: 7), role: .regular)
-        .help(Self.tooltip(option, index: index))
+        .help(Self.tooltip(option, index: index, keys: keys))
         .accessibilityLabel("\(index + 1). \(option.label)")
     }
 
     /// The whole option and its key: "Juice Island — Reads like a place; matches the repo juice-island.  ⌃1".
-    static func tooltip(_ option: QuestionCardModel.Option, index: Int) -> String {
+    static func tooltip(_ option: QuestionCardModel.Option, index: Int, keys: CardKeys = .standard) -> String {
         let text = option.description.isEmpty ? option.label : "\(option.label) — \(option.description)"
-        return index < 4 ? "\(text)  ⌃\(index + 1)" : text
+        return keys.optionHint(index).map { "\(text)  \($0)" } ?? text
     }
 
     private var background: Color {

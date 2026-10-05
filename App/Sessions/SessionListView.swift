@@ -6,7 +6,7 @@ import SwiftUI
 /// column under 1000 pt). Needs you only: just the cards and "N more running or done · Show all" (the other active
 /// sessions), or "Earlier" when the others all finished longer ago.
 /// "Nothing needs you" shows only in Needs you only, where nothing else would; with no sessions at all, one quiet
-/// "No sessions" sits in the middle. Holding ⌃ shows every card's keys. Owner: stream C.
+/// "Start an agent" sits in the middle (with Connect while nothing is connected, P965). Holding ⌃ shows every card's keys. Owner: stream C.
 struct SessionListView: View {
     @Environment(\.juiceTheme) private var theme
     @Environment(AppEnvironment.self) private var env
@@ -14,10 +14,8 @@ struct SessionListView: View {
     var body: some View {
         GeometryReader { proxy in
             if env.sessions.rows.isEmpty {
-                // Nothing at all: one quiet line in the middle of the list, the island's own words.
-                Text("No sessions")
-                    .font(Fonts.sys(12, .medium))
-                    .foregroundStyle(theme.island.ink3)
+                // Nothing at all: one quiet line in the middle of the list, the island's own words: where to start (P965).
+                NoSessionsLine(size: .window)
                     .frame(width: proxy.size.width, height: proxy.size.height)
             } else {
                 ScrollView(.vertical) {
@@ -51,7 +49,15 @@ struct SessionListContent: View {
         let needsOnly = env.windowFilter == .needsYou
         VStack(alignment: .leading, spacing: 0) {
             if !needsYou.isEmpty {
-                NeedsYouFilterHeader(count: needsYou.count).padding(EdgeInsets(top: 6, leading: 4, bottom: 4, trailing: 4))
+                // Deny all and Allow all at the line's end while two or more approvals wait, then their note (P1031).
+                HStack(spacing: 8) {
+                    NeedsYouFilterHeader(count: needsYou.count)
+                    Spacer(minLength: 8)
+                    WindowAnswerAll()
+                }
+                .padding(EdgeInsets(top: 6, leading: 4, bottom: 4, trailing: 4))
+            } else if let note = env.answerAllNote {
+                AnswerAllNoteText(note: note).padding(EdgeInsets(top: 6, leading: 12, bottom: 4, trailing: 4))
             }
             let cards = needsYou.compactMap { row in env.sessions.card(for: row.id) }
             let gap = WindowTheme.Metrics.gridGap
@@ -71,7 +77,9 @@ struct SessionListContent: View {
             } else if SessionListLayout.flowsIntoNeedsColumns(needsColumns: needsColumns, windowWidth: windowWidth) {
                 // One masonry: Running and Done go under the shortest Needs you column, so no card leaves a hole.
                 MasonryLayout(columns: needsColumns, spacing: gap) {
-                    ForEach(cards, id: \.sessionID) { card in SessionCardView(card: card, style: .window).id(card.sessionID) }
+                    ForEach(cards, id: \.sessionID) { card in
+                        SessionCardView(card: card, style: .window).id(card.sessionID).windowCardInView(card.sessionID)
+                    }
                     if split.showsRunningCard { runningCard(split) }
                     if !split.done.isEmpty { doneCard(split) }
                 }
@@ -91,7 +99,9 @@ struct SessionListContent: View {
 
     private func needsGrid(_ cards: [SessionCard], columns: Int) -> some View {
         MasonryLayout(columns: columns, spacing: WindowTheme.Metrics.gridGap) {
-            ForEach(cards, id: \.sessionID) { card in SessionCardView(card: card, style: .window).id(card.sessionID) }
+            ForEach(cards, id: \.sessionID) { card in
+                SessionCardView(card: card, style: .window).id(card.sessionID).windowCardInView(card.sessionID)
+            }
         }
     }
 
@@ -296,5 +306,30 @@ private struct ListRow: View {
         .onTapGesture { env.sessions.jump(row.id) }
         .sessionMenu(row)
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+extension View {
+    /// A Needs you card in the window tells whether the list has scrolled it out of view (`WindowAttention`, P1050): a
+    /// Codex request is held for a card only while the owner can see it. A card counts as in view until the list says
+    /// otherwise, and leaves the set when it goes.
+    func windowCardInView(_ sessionID: String) -> some View {
+        modifier(WindowCardInView(sessionID: sessionID))
+    }
+}
+
+private struct WindowCardInView: ViewModifier {
+    let sessionID: String
+    @Environment(AppEnvironment.self) private var env
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollVisibilityChange(threshold: 0.5) { visible in
+                guard env.windowCardsOutOfView.contains(sessionID) == visible else { return }
+                if visible { env.windowCardsOutOfView.remove(sessionID) } else { env.windowCardsOutOfView.insert(sessionID) }
+            }
+            .onDisappear {
+                if env.windowCardsOutOfView.contains(sessionID) { env.windowCardsOutOfView.remove(sessionID) }
+            }
     }
 }

@@ -10,7 +10,7 @@ import OpenIslandCore
 extension FixtureSessionFeed {
     enum AgentID {
         static let openCodeApproval = "opencode-ses_demo_push"
-        static let kimiApproval = "demo-kimi-approval"
+        static let qoderApproval = "demo-qoder-approval"
         static let qwenQuestion = "demo-qwen-question"
         static let geminiRunning = "demo-gemini-running"
         static let cursorRunning = "demo-cursor-running"
@@ -19,26 +19,27 @@ extension FixtureSessionFeed {
         static let openCodeDone = "opencode-ses_demo_notes"
         static let factoryDone = "demo-factory-done"
         static let grokDone = "demo-grok-done"
-        static let qoderDone = "demo-qoder-done"
+        static let kimiDone = "demo-kimi-done"
         static let codebuddyDone = "demo-codebuddy-done"
         static let ohMyPiDone = "demo-ohmypi-done"
         static let openCodeQuestion = "opencode-ses_demo_release"
     }
 
-    /// Needs you: an OpenCode command, a Kimi command, a Qwen question. Running: Gemini, Cursor's shell, Pi's read.
+    /// Needs you: an OpenCode command, a Qoder command, a Qwen question. Running: Gemini, Cursor's shell, Pi's read.
     /// Done: Gemini (its reply sent twice, as Gemini sometimes does), OpenCode, Factory and Grok within the quarter
-    /// hour; Qoder, CodeBuddy and Oh My Pi an hour ago and more.
+    /// hour; Kimi, CodeBuddy and Oh My Pi an hour ago and more. The fork that asks is Qoder, which the island answers:
+    /// Kimi is Watch, so a card of its with Allow and Deny would show what Kimi can never get (P1135).
     static func agentEvents(now: Date) -> [AgentEvent] {
         let m: TimeInterval = 60
         var events: [AgentEvent] = []
         events += openCodeStart(AgentID.openCodeApproval, project: "notes-site", prompt: "push the fix", at: now - 9 * m)
         events += openCodePermission(AgentID.openCodeApproval, project: "notes-site", tool: "Bash", patterns: [openCodePush],
                                      at: now - 2 * m)
-        events += claudeFork(AgentID.kimiApproval, source: "kimi", project: "juice-island", prompt: "clean the build",
+        events += claudeFork(AgentID.qoderApproval, source: "qoder", project: "juice-island", prompt: "clean the build",
                              at: now - 8 * m)
-        events.append(forkApproval(AgentID.kimiApproval, source: "kimi", project: "juice-island", tool: "Bash",
-                                   input: .object(["command": .string(kimiCommand), "description": .string("Remove the stale test bundle")]),
-                                   useID: "call_kimi_clean", at: now - 3 * m))
+        events.append(forkApproval(AgentID.qoderApproval, source: "qoder", project: "juice-island", tool: "Bash",
+                                   input: .object(["command": .string(forkCommand), "description": .string("Remove the stale test bundle")]),
+                                   useID: "call_qoder_clean", at: now - 3 * m))
         events += claudeFork(AgentID.qwenQuestion, source: "qwen", project: "WeatherStation", prompt: "pick a chart", at: now - 7 * m)
         events.append(.questionAsked(QuestionAsked(sessionID: AgentID.qwenQuestion, prompt: try! forkPayload([
             "hook_event_name": .string("PermissionRequest"), "session_id": .string(AgentID.qwenQuestion),
@@ -67,9 +68,9 @@ extension FixtureSessionFeed {
                            message: "The release script tags `juice-0.4-1` and pushes only to the private origin.", at: now - 8 * m)
         events += grokEvents(AgentID.grokDone, project: "Desktop", prompt: "rename the screenshots",
                              message: "Renamed 14 screenshots by date.", at: now - 11 * m, finishedAt: now - 9 * m)
-        events += claudeFork(AgentID.qoderDone, source: "qoder", project: "WeatherStation", prompt: "list the open issues",
+        events += claudeFork(AgentID.kimiDone, source: "kimi", project: "WeatherStation", prompt: "list the open issues",
                              at: now - 90 * m)
-        events += forkStop(AgentID.qoderDone, source: "qoder", project: "WeatherStation", prompt: "list the open issues",
+        events += forkStop(AgentID.kimiDone, source: "kimi", project: "WeatherStation", prompt: "list the open issues",
                            message: "Seven issues are open; two are labelled bug.", at: now - 85 * m)
         events += claudeFork(AgentID.codebuddyDone, source: "codebuddy", project: "notes-site", prompt: "fix the links",
                              at: now - 120 * m)
@@ -97,7 +98,7 @@ extension FixtureSessionFeed {
     }
 
     static let openCodePush = "git push origin fix/intro-links"
-    static let kimiCommand = "rm -rf .build/arm64-apple-macosx/debug/JuiceIslandPackageTests.xctest && swift build --build-tests"
+    static let forkCommand = "rm -rf .build/arm64-apple-macosx/debug/JuiceIslandPackageTests.xctest && swift build --build-tests"
     static let geminiReply = """
         Drafted **docs/setup.md**:
 

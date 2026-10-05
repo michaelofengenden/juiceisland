@@ -70,12 +70,17 @@ struct OpenCodeAttentionTests {
         #expect(t.sent.current == [.resolvePermission(sessionID: Self.v2, resolution: .allowOnce())])
     }
 
-    /// Another agent's session never takes OpenCode's rule, whatever its id.
+    /// Another agent's session never takes OpenCode's rule, whatever its id. (An agent the table marks Watch, Cursor's
+    /// here, shows every request read-only by its own rule, P1159.)
     @Test
     func onlyOpenCodeSessionsAreRead() {
         let s = S()
-        s.begin("opencode2-lookalike", tool: .cursor)
+        s.begin("opencode2-lookalike", tool: .qwenCode)
         s.bridge(F.question("opencode2-lookalike", at: s.clock.current))
         #expect(s.head("opencode2-lookalike")?.channel == .answer(.bridge))
+        let t = S()
+        t.begin("opencode2-lookalike", tool: .cursor)
+        t.bridge(F.question("opencode2-lookalike", at: t.clock.current))
+        #expect(t.head("opencode2-lookalike")?.channel == .open)
     }
 }

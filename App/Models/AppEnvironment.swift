@@ -4,7 +4,7 @@ import Observation
 
 /// The Settings panes, in sidebar order. Watch is gone (it becomes Filters in M8, C9).
 enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
-    case general, island, sound, shortcuts, accounts, money, desktopPanel, diagnostics, setup, about
+    case general, island, sound, shortcuts, agents, accounts, money, desktopPanel, diagnostics, about
 
     var id: String { rawValue }
 
@@ -14,11 +14,11 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .island: "Island"
         case .sound: "Sound"
         case .shortcuts: "Shortcuts"
+        case .agents: "Agents"
         case .accounts: "Accounts"
         case .money: "Money"
         case .desktopPanel: "Desktop Panel"
         case .diagnostics: "Diagnostics"
-        case .setup: "Setup"
         case .about: "About"
         }
     }
@@ -35,6 +35,8 @@ struct AppActions {
     var quit: @MainActor () -> Void = {}
     /// Settings › Desktop Panel › Reset Position.
     var resetPanelPosition: @MainActor () -> Void = {}
+    /// Settings › About › Show welcome (P951).
+    var showWelcome: @MainActor () -> Void = {}
 }
 
 /// Everything a view binds to, injected once at the root with `.environment(env)` and read with
@@ -46,18 +48,40 @@ final class AppEnvironment {
     /// Replaced when Settings › Accounts › Usage source changes (`followUsageSource`).
     private(set) var usage: any UsageModel
     let sessions: any SessionsModel
-    /// Settings › Setup, Diagnostics' Hooks section and the drift rows: fixture profiles unless the app sets
+    /// Settings › Agents, Diagnostics' Hooks section and the drift rows: fixture profiles unless the app sets
     /// `ProfileHooks` (`AppEnvironment.app`).
     var hooks: any HooksModel = DemoHooksModel()
-    /// Settings › Setup › SSH hosts (P751): no host unless the app sets `RemoteHosts` (`AppEnvironment.app`).
+    /// Settings › Agents (P935): Claude, Codex and OpenCode over `hooks` as it is now, then the agents table's sources
+    /// (`AgentsPaneModel.sources`, set by the app). Renders find no command, so their agents are `hooks`' rows. Codex is
+    /// Approve only while the app answers it (`LiveSessions.answersCodex`, either mode since P1050), Watch otherwise (P947).
+    @ObservationIgnored lazy var agentsPane: AgentsPaneModel = {
+        let model = AgentsPaneModel(hooks: { [unowned self] in self.hooks })
+        model.answersCodex = { [unowned self] in LiveSessions.answersCodex(self.settings) }
+        return model
+    }()
+    var agents: any AgentsModel { agentsPane }
+    /// Settings › Agents › SSH hosts (P751): no host unless the app sets `RemoteHosts` (`AppEnvironment.app`).
     var remoteHosts: any RemoteHostsModel = DemoRemoteHostsModel()
     @ObservationIgnored var actions: AppActions
     /// Shared transient UI state (not persisted).
     var windowFilter: WindowFilter = .all
     /// The window's row the keys are on (↑ ↓, Return, P321): nil until an arrow is pressed, and again after Esc.
     var windowSelection: String?
+    /// The window's Needs you cards scrolled out of the list's view, by session (`WindowAttention`, P1050).
+    var windowCardsOutOfView: Set<String> = []
+    /// Which app this is (P820): the public flavor hides the motion A/B knobs and offers Report a bug (P1060, P1065).
+    /// Renders and tests pick either; the app's is its bundle's.
+    var flavor: AppFlavor = .current
     /// The quota notice the island shows (P125): set by the island as it presents one, by renders to draw one.
     var islandNotice: QuotaNotice?
+    /// Allow all's or Deny all's one line, until it clears itself (`BatchAnswer`, P1031).
+    var answerAllNote: AnswerAllNote?
+    /// The requests Allow all or Deny all just answered, until their cards went: the island never presents one of them
+    /// as the next card (P1035).
+    @ObservationIgnored var answeredByAll: Set<String> = []
+    /// The keys macOS takes itself, for Settings › Shortcuts' line (P1029): none in renders and tests, the owner's own
+    /// list in the app (`app`).
+    @ObservationIgnored var systemShortcuts = SystemShortcuts.none
     /// Diagnostics › Motion's last motions: the island adds each one it records.
     let motionLog = MotionLog()
     /// In-app Update: newer commits on main, and the update run. Renders and tests get inert ones (an unknown build
@@ -111,18 +135,26 @@ final class AppEnvironment {
         // Hears the screen lock and the session switching out for Quiet while locked: the sounds here, the island's
         // opens and its catch-up there (P422, P423).
         let lock = ScreenLockWatch()
+        // Quiet while presenting and a Focus (P1005, P1006), read where each sound, card, reminder or banner would come.
+        let scenes = QuietScenes(settings: settings)
         let sessions = LiveSessions(settings: settings, demo: { FixtureSessionFeed(scenario: .allStates, now: now).makeModel() },
                                     profiles: { directory.current }, identity: .current, sounds: SystemSoundPlayer(),
-                                    away: { lock.isAway })
+                                    away: { lock.isAway }, scene: { scenes.now() })
         hooks.hookEvents = { [weak sessions] in sessions?.engine?.lastHookEventAt ?? [:] }
+        hooks.onHooksChanged = { [weak sessions] in sessions?.engine?.hooksChanged() }
         directory.onChange.append { [weak sessions] _ in sessions?.profilesChanged() }
         let (checker, controller) = updates(stamp: .current, settings: settings, flavor: .current, feed: feed)
         let environment = AppEnvironment(settings: settings, usage: DemoUsageModel(now: now), sessions: sessions,
                                          updateChecker: checker, updateController: controller, identity: identity)
         environment.liveSessions = sessions
+        environment.systemShortcuts = .live
         environment.screenLock = lock
+        environment.quietScenes = scenes
         environment.launchAtLogin = .app(settings: settings)
         environment.hooks = hooks
+        environment.agentsPane.live()
+        // Every agent besides Claude, Codex and OpenCode comes from the engine's agents table (P915).
+        environment.agentsPane.sources = [TableAgents.app()]
         // SSH hosts' tunnels follow the live engine (P747); nothing connects before the app's launch activates it.
         let remote = RemoteHosts()
         environment.remoteHosts = remote
@@ -131,19 +163,24 @@ final class AppEnvironment {
         // Reminders and banners follow their switches from launch (`AppDelegate`); off, neither runs, and Notification
         // Center is not touched until the owner turns banners on.
         let followUps = FollowUps(sessions: sessions, settings: settings, sounds: SystemSoundPlayer())
-        followUps.live = { [weak sessions] in sessions?.mode == .live }
+        // Made-up sessions on show (the Hello demo, Demo sessions) never remind or post a banner (P967).
+        followUps.live = { [weak sessions] in sessions?.mode == .live && sessions?.showsRealSessions == true }
         followUps.away = { lock.isAway }
+        followUps.scene = { scenes.now() }
         environment.followUps = followUps
         let banners = Banners(settings: settings, sessions: sessions, center: { SystemBannerCenter() })
-        banners.live = { [weak sessions] in sessions?.mode == .live }
+        banners.live = { [weak sessions] in sessions?.mode == .live && sessions?.showsRealSessions == true }
         banners.away = { lock.isAway }
+        banners.scene = { scenes.now() }
         environment.banners = banners
         // Snooze's end (P725) and Archive idle sessions after (P727): each one timer, set only while it has a moment to
         // wait for; the shell starts both at launch.
         environment.snoozeEnd = SnoozeEnd(settings: settings)
         let tidy = AutoTidy(sessions: sessions, settings: settings)
-        tidy.live = { [weak sessions] in sessions?.mode == .live }
+        tidy.live = { [weak sessions] in sessions?.mode == .live && sessions?.showsRealSessions == true }
         environment.autoTidy = tidy
+        // Settings › About › Install automatically (P1070); the shell starts it at launch.
+        environment.autoInstall = AutoInstall.app(env: environment)
         sessions.onReleased = { [weak banners, weak followUps] signal in
             banners?.released(signal)
             followUps?.released(signal)
@@ -180,7 +217,10 @@ final class AppEnvironment {
         let checker = UpdateChecker(stamp: stamp, git: NoGitRunner(), off: feed == nil)
         let controller = UpdateController(repoPath: nil, build: stamp.shortCommit, commit: stamp.commit)
         if let feed {
-            FeedUpdates.join(FeedUpdates(updater: feed, runningVersion: version, memory: memory), checker: checker, controller: controller)
+            let updates = FeedUpdates(updater: feed, runningVersion: version, memory: memory)
+            FeedUpdates.join(updates, checker: checker, controller: controller)
+            // Install automatically: Sparkle's own, downloading in the background and installing at quit (P1074).
+            updates.followAutomaticInstall(settings)
         }
         return (checker, controller)
     }
@@ -225,6 +265,9 @@ final class AppEnvironment {
     var launchAtLogin: LaunchAtLogin?
     /// The screen lock and the session switching out (`AppEnvironment.app`); nil in renders and tests, which hear neither.
     var screenLock: ScreenLockWatch?
+    /// Quiet while presenting and a Focus (`AppEnvironment.app`, P1005, P1006); nil in renders and tests, which have
+    /// neither.
+    var quietScenes: QuietScenes?
     /// The system-wide jump key (the shell makes it at launch); nil in renders and tests, which register nothing.
     var globalJump: GlobalJumpHotKey?
     /// Reads the accounts at work at their boosted floor (#12); the app's only.
@@ -238,6 +281,8 @@ final class AppEnvironment {
     @ObservationIgnored var snoozeEnd: SnoozeEnd?
     /// Settings › Island › Archive idle sessions after (P727); nil in renders and tests unless they make one.
     @ObservationIgnored var autoTidy: AutoTidy?
+    /// Settings › About › Install automatically, the private app's (P1070); nil in the public flavor, renders and tests.
+    @ObservationIgnored var autoInstall: AutoInstall?
 
     /// The accounts in use as the panel's watch last made them (P810, P814): the desktop panel's marks; none while the
     /// panel is off. The island takes its own at each open (`IslandUIState.inUse`), so nothing moves while it shows.

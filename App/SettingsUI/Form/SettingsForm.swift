@@ -268,13 +268,16 @@ struct MonoText: View {
     let text: String
     var colour: Color = SettingsTheme.ink2
     var lines = 1
-    init(_ text: String, colour: Color = SettingsTheme.ink2, lines: Int = 1) {
+    /// `.middle` for a path, whose file name is at its end.
+    var truncation: Text.TruncationMode = .tail
+    init(_ text: String, colour: Color = SettingsTheme.ink2, lines: Int = 1, truncation: Text.TruncationMode = .tail) {
         self.text = text
         self.colour = colour
         self.lines = lines
+        self.truncation = truncation
     }
 
     var body: some View {
-        Text(text).font(Fonts.mono(11.5)).foregroundStyle(colour).lineLimit(lines).truncationMode(.tail)
+        Text(text).font(Fonts.mono(11.5)).foregroundStyle(colour).lineLimit(lines).truncationMode(truncation)
     }
 }

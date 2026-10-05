@@ -53,6 +53,8 @@ struct MoneyRowsView: View {
                     } else if let suffix = row.suffix {
                         Text(suffix).font(Theme.moneySuffixFont).foregroundStyle(suffixColour(row))
                     }
+                } else if let word = row.word {
+                    Text(word).font(Theme.moneySuffixFont).foregroundStyle(palette.ink2)
                 } else {
                     rails
                 }
@@ -170,10 +172,10 @@ enum MoneyGrid {
         rows.map { ceil(measure($0.name, NSFont.systemFont(ofSize: 12.5))) + 1 }.max() ?? 0
     }
 
-    /// A column's amount width: its widest amount with its suffix (`$11.21 spent`), or the rails.
+    /// A column's amount width: its widest amount with its suffix (`$11.21 spent`), its word (`No access`), or the rails.
     @MainActor static func amountWidth(_ rows: some Collection<MoneyRowModel>) -> CGFloat {
         rows.map { row in
-            guard let amount = row.amount else { return 10 }
+            guard let amount = row.amount else { return row.word.map { ceil(measure($0, NSFont.systemFont(ofSize: 11))) + 1 } ?? 10 }
             var width = measure(amount, NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold))
             if let suffix = row.isSpent ? "spent" : row.suffix { width += 5 + measure(suffix, NSFont.systemFont(ofSize: 11)) }
             return ceil(width) + 1

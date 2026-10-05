@@ -84,7 +84,7 @@ extension SessionEngine {
         guard let store = configuration.sessionLabels, let session = state.session(id: sessionID), !session.isSubagentSession else { return }
         let live = liveFacts(for: session)
         guard labelBook.take(sessionID, model: live.model, mode: live.mode, effort: live.effort, effortSaid: effortSaid(sessionID),
-                             at: dependencies.now()) else { return }
+                             agent: agentLabels[sessionID]?.rawValue, at: dependencies.now()) else { return }
         store.save(labelBook.labels)
     }
 

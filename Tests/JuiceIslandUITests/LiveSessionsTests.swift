@@ -20,6 +20,8 @@ private final class StubBridge: EngineBridge, @unchecked Sendable {
 struct LiveSessionsTests {
     fileprivate final class Probe: @unchecked Sendable {
         var otherIsland = false
+        /// The bridge's scratch path stands in for Open Island's own socket.
+        var sharedSocket = false
         var ownedSockets = false
         var binds: [URL] = []
         var bridges: [StubBridge] = []
@@ -32,6 +34,7 @@ struct LiveSessionsTests {
             var configuration = SessionEngine.Configuration.headless
             configuration.startBridge = true
             configuration.socketURL = URL(fileURLWithPath: "/tmp/juice-island-test-\(UUID().uuidString).sock")
+            if probe.sharedSocket { configuration.openIslandSocketURL = configuration.socketURL }
             var dependencies = SessionEngine.Dependencies()
             dependencies.isOtherIslandRunning = { probe.otherIsland }
             dependencies.socketHasOwner = { _ in probe.ownedSockets }
@@ -117,6 +120,17 @@ struct LiveSessionsTests {
     func refusedWhileOpenIslandRunsAndTheSwitchGoesBackOff() {
         let probe = Probe()
         probe.otherIsland = true
+        // On a socket of its own (the app's, P900) Open Island running holds nothing back.
+        let own = makeLive(probe)
+        own.settings.liveSessions = true
+        own.apply()
+        #expect(own.refusal == nil && own.mode == .live && probe.binds.count == 1)
+        own.settings.liveSessions = false
+        own.apply()
+        probe.binds = []
+
+        // On Open Island's own socket it still does.
+        probe.sharedSocket = true
         let live = makeLive(probe)
         live.settings.liveSessions = true
         live.apply()

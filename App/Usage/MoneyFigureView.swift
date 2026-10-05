@@ -5,7 +5,7 @@ import SwiftUI
 /// How a money amount is drawn on each surface.
 enum MoneyFigureStyle: Sendable {
     /// Window header (grid and strip), Detailed island: 600 12.5 amount, 11 pt grey suffix 5 pt after it, "spent" for
-    /// money spent, rails (two 1 × 9 `line` bars) when not connected.
+    /// money spent; with no amount the row's word in that grey (`No access`, P1213), else rails (two 1 × 9 `line` bars).
     case full
     /// The island's Clean rows: 600 12 amount, no "spent" and no "/mo"; only a runway suffix (RunPod), 4 pt after it;
     /// rails are 12 tall `idleMark`, at least 26 wide.
@@ -37,6 +37,11 @@ struct MoneyFigureView: View {
                 }
             }
             .fixedSize()
+        } else if style == .full, let word = row.word {
+            Text(word)
+                .font(.system(size: MoneyFigureStyle.suffixSize))
+                .foregroundStyle(theme.panel.ink2)
+                .fixedSize()
         } else {
             rails
         }
@@ -77,7 +82,10 @@ enum MoneyFigureText {
 
     /// The drawn width of a figure, suffix included.
     static func width(_ row: MoneyRowModel, style: MoneyFigureStyle, detail: MoneyDetail?) -> CGFloat {
-        guard let amount = row.amount else { return style == .clean ? 28 : 10 }
+        guard let amount = row.amount else {
+            if style == .full, let word = row.word { return ceil(measure(word, font: .systemFont(ofSize: MoneyFigureStyle.suffixSize))) }
+            return style == .clean ? 28 : 10
+        }
         var width = measure(amount, font: .monospacedDigitSystemFont(ofSize: style.amountSize, weight: .semibold))
         if let suffix = suffix(row, style: style, detail: detail) {
             width += style.suffixGap + measure(suffix, font: .systemFont(ofSize: MoneyFigureStyle.suffixSize))

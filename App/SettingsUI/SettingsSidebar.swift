@@ -10,8 +10,8 @@ struct SettingsSidebar: View {
     /// Groups without headers: the gaps between them say enough.
     static let groups: [[SettingsPane]] = [
         [.general, .island, .sound, .shortcuts],
-        [.accounts, .money, .desktopPanel],
-        [.setup, .diagnostics],
+        [.agents, .accounts, .money, .desktopPanel],
+        [.diagnostics],
         [.about],
     ]
 
@@ -91,7 +91,7 @@ struct SettingsPaneIcon: View {
         case .money: light ? "#248A3D" : "#30D158"
         case .desktopPanel: light ? "#5856D6" : "#5E5CE6"
         case .diagnostics: light ? "#0C7C78" : "#66D4CF"
-        case .setup: light ? "#AD5D00" : "#FF9F0A"
+        case .agents: light ? "#AD5D00" : "#FF9F0A"
         }
     }
 
@@ -119,8 +119,9 @@ struct SettingsPaneIcon: View {
             ##"<rect x=".6" y="1.6" width="14.8" height="10.2" rx="1.8" fill="\##(c)"/><rect x="8.8" y="3.4" width="4.8" height="3" rx=".7" fill="\##(cut)"/><path d="M6.4 11.6h3.2l.5 2.4H5.9z" fill="\##(c)"/><rect x="4.4" y="13.6" width="7.2" height="1.6" rx=".8" fill="\##(c)"/>"##
         case .diagnostics:
             ##"<path d="M.8 8.6h3l1.7-4.6 2.6 8.2 2-5.6 1.1 2h4" fill="none" stroke="\##(c)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>"##
-        case .setup:
-            ##"<circle cx="8" cy="8" r="7" fill="\##(c)"/><path d="M8 4.2v6.2M5.3 7.9 8 10.6l2.7-2.7" fill="none" stroke="\##(cut)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>"##
+        case .agents:
+            // A terminal: a prompt's chevron and its cursor, cut out.
+            ##"<rect x=".8" y="2.2" width="14.4" height="11.6" rx="2.2" fill="\##(c)"/><path d="M4.3 6.1 6.8 8l-2.5 1.9" fill="none" stroke="\##(cut)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.6 10.3h3.2" stroke="\##(cut)" stroke-width="1.5" stroke-linecap="round"/>"##
         case .about:
             ##"<circle cx="8" cy="8" r="7" fill="\##(c)"/><circle cx="8" cy="4.9" r="1" fill="\##(cut)"/><path d="M8 7.2v4.6" stroke="\##(cut)" stroke-width="1.8" stroke-linecap="round"/>"##
         }

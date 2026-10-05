@@ -39,10 +39,12 @@ struct BridgeHealthTests {
     let socket = URL(fileURLWithPath: "/tmp/juice-island-test-\(UUID().uuidString).sock")
     var legacy: String { BridgeSocketLocation.legacyURL.path }
 
-    func engine(watch: (@MainActor (String, @escaping @MainActor @Sendable () -> Void) -> (any HookWatchToken)?)? = nil) -> SessionEngine {
+    func engine(onOpenIslandsSocket: Bool = false,
+                watch: (@MainActor (String, @escaping @MainActor @Sendable () -> Void) -> (any HookWatchToken)?)? = nil) -> SessionEngine {
         var configuration = SessionEngine.Configuration.headless
         configuration.startBridge = true
         configuration.socketURL = socket
+        if onOpenIslandsSocket { configuration.openIslandSocketURL = socket }
         configuration.watchesBridgeSockets = watch != nil
         var dependencies = SessionEngine.Dependencies()
         let world = world, sent = sent, legacy = legacy
@@ -154,10 +156,23 @@ struct BridgeHealthTests {
         #expect(world.bridges.current.count == 1 && engine.bridgeHealth == .live(sockets: 2) && engine.legacySocketLossNoted)
     }
 
-    /// Open Island started while the socket was lost: the bridge does not take it back, and waits as taken.
+    /// On a socket of its own (P900) Open Island running holds nothing back: a lost socket is taken back at once.
     @Test
-    func openIslandRunningKeepsTheSocketItsOwn() async throws {
+    func openIslandRunningLeavesTheAppsOwnSocketAlone() async throws {
         let engine = engine()
+        try engine.start()
+        defer { engine.stop() }
+        world.files.update { $0[socket.path] = nil }
+        world.otherIsland.update { $0 = true }
+        await engine.checkBridgeSockets()?.value
+        #expect(engine.bridgeHealth == .live(sockets: 2) && world.bridges.current.count == 2)
+    }
+
+    /// A bridge set up on Open Island's own socket path (a scratch path stands in for it) still yields it: Open Island
+    /// started while the socket was lost, so the bridge does not take it back, and waits as taken.
+    @Test
+    func onOpenIslandsSocketOpenIslandRunningKeepsItsOwn() async throws {
+        let engine = engine(onOpenIslandsSocket: true)
         try engine.start()
         defer { engine.stop() }
         world.files.update { $0[socket.path] = nil }

@@ -156,6 +156,30 @@ struct MuteRulesTests {
         }
     }
 
+    /// A row whose agent waits on the island alone (Copilot CLI's, Devin's or Qwen Code's approval) is never muted: its
+    /// card opens and it sounds, though a rule matches it, and the editor still counts it (P931).
+    @Test func anAgentThatWaitsOnTheIslandAloneIsNeverMuted() async throws {
+        var waiting = Self.row("w", .kind(.copilot), .needsYou)
+        waiting.waitsOnIsland = true
+        let rules = [Self.rule(.folder, "juice")]
+        #expect(!rules.mutes(waiting) && rules.mutes(Self.row("m", .kind(.copilot), .needsYou)))
+        #expect(MuteRules.unmuted([.needsYou("w")], rows: [waiting], rules: rules) == [.needsYou("w")])
+        #expect(MuteRules.matchCount([waiting], rules: rules) == 1)
+
+        let probe = QuietLaneRig.Probe(), player = RecordingSoundPlayer(), settings = AppSettings.ephemeral()
+        settings.muteRules = [Self.rule(.folder, "/tmp/scratch")]
+        let live = QuietLaneRig.live(probe, settings: settings, player: player)
+        let engine = try #require(live.engine)
+        engine.ingest(.sessionStarted(SessionStarted(
+            sessionID: "cp-1", title: "Copilot · scratch", tool: .codebuddy, origin: .live, initialPhase: .running, summary: "Started.",
+            timestamp: probe.now, jumpTarget: JumpTarget(terminalApp: "Terminal", workspaceName: "scratch", paneTitle: "copilot",
+                                                         workingDirectory: "/tmp/scratch", terminalTTY: "/dev/ttys004"))), ingress: .bridge)
+        engine.ingest(QuietLaneRig.prompt("cp-1", "fix the tests", at: probe.now), ingress: .bridge)
+        engine.ingest(QuietLaneRig.permission("cp-1", "toolu_c1", at: probe.now), ingress: .bridge)
+        #expect(live.row(id: "cp-1")?.waitsOnIsland == true)
+        #expect(player.played == ["Glass"])
+    }
+
     /// With the live engine: a muted session's approval and its Done play nothing, another session's play; the row's
     /// first prompt comes from the engine, and a rule on it mutes too. Removing the rule brings the sound back.
     @Test func aMutedSessionPlaysNoSound() async throws {

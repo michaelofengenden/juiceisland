@@ -5,7 +5,9 @@
 # files carrying a path in the home folder as a real build's symbols do), and release-fake.zsh standing in for
 # codesign's signing, notarytool, stapler, spctl, the keychain's identity list, Sparkle's tools and gh
 # (JI_RELEASE_TOOLS), with its knobs for each failure. ditto, strip, hdiutil and xmllint run for real, in <work-dir>,
-# and so does lipo, through a stand-in first on PATH that can hide a slice from lipo -archs (FAKE_LIPO_DROP). No
+# and so does lipo, through a stand-in first on PATH that can hide a slice from lipo -archs (FAKE_LIPO_DROP). The DMG's
+# read-write image is mounted for its layout as a downloaded one is, at /Volumes/Juice, with -nobrowse (no Finder
+# window), and unmounted before each run ends; the test mounts the finished DMGs under <work-dir> to read them. No
 # network, no keychain, nothing outside <work-dir> changed.
 # Usage: zsh scripts/tests/release-script-test.zsh <work-dir>   (a folder that does not exist yet)
 set -euo pipefail
@@ -29,7 +31,10 @@ SIG=anVpY2UtcmVsZWFzZS1mYWtlLWVkMjU1MTktc2lnbmF0dXJlLWZvci10ZXN0cy1vbmx5LTAxMjM0
 
 git clone -q "$source_repo" "$repo"
 git -C "$repo" checkout -q -B main "$source_head"
-for f in scripts/release.sh scripts/release-fake.zsh scripts/public-settings.sh VERSION .gitignore; do cp "$src/$f" "$repo/$f"; done
+for f in scripts/release.sh scripts/release-fake.zsh scripts/public-settings.sh scripts/dmg-layout.swift \
+         scripts/dmg/background.png scripts/dmg/background@2x.png VERSION .gitignore; do
+  mkdir -p "$repo/${f:h}"; cp "$src/$f" "$repo/$f"
+done
 git -C "$repo" add scripts VERSION .gitignore
 git -C "$repo" diff --cached --quiet || git -C "$repo" commit -q -m "Scripts under test"
 version=$(head -1 "$repo/VERSION")
@@ -131,6 +136,14 @@ DEVELOPMENT_TEAM = ABCDE12345   // the team
 CODE_SIGN_IDENTITY = Developer ID Application: Test Person (ABCDE12345)
 SPARKLE_PUBLIC_ED_KEY = $KEY" > "$JI_SIGNING_FILE"
 
+# The Homebrew tap's clone beside the repository, where release.sh looks for it: --check and --publish need it (P990).
+# Each run starts with its Casks folder gone, as after the owner committed the last cask, unless keep_tap is set.
+tap=$W/homebrew-tap
+git init -q -b main "$tap"
+git -C "$tap" remote add origin https://github.com/example/homebrew-tap.git
+print -r -- "tap" > "$tap/README.md"; git -C "$tap" add README.md; git -C "$tap" commit -q -m "Start the tap"
+keep_tap=
+
 passed=0 failed=0 case=
 check() {
   local name=$1; shift
@@ -149,6 +162,7 @@ start() {
 # Runs release.sh from the repository, with the stand-ins' log and notes and the build's log new; its output in
 # $W/out, its status in $rc.
 release() {
+  [[ -n $keep_tap ]] || rm -rf "$tap/Casks"
   rm -f "$W"/calls(N) "$W"/calls.*(N) "$W/build.calls"; : > "$W/calls"; : > "$W/build.calls"
   rc=0; (cd "$repo" && zsh scripts/release.sh "$@") > "$W/out" 2>&1 || rc=$?
 }
@@ -166,6 +180,25 @@ work_app=$outdir/work/Juice.app
 plist_of() { /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" }
 count() { git -C "$repo" rev-list --count HEAD }
 signed_items() { grep -E '^codesign .*--sign ' "$W/calls" | awk '{print $NF}' }
+# A finished DMG as Finder would find it: mounted read-only under $W, its .DS_Store read by the release's own layout tool,
+# and what is on the volume. Writes $W/dmg-shows.
+dmg_shows() {
+  local at=$W/mnt-$(( ++mounts )) tool
+  tool=($repo/output/release.noindex/tools/dmg-layout-*(N.x))
+  mkdir -p "$at"
+  hdiutil attach -quiet -nobrowse -noautoopen -noverify -readonly -mountpoint "$at" "$1" || { : > "$W/dmg-shows"; return 1 }
+  {
+    "${tool[1]}" --read "$at/.DS_Store"
+    print -l -- "${(@f)$(ls -A "$at")}"
+    [[ ! -L $at/Applications || "$(readlink "$at/Applications")" != /Applications ]] || print -r -- "link to /Applications"
+    [[ ! -s $at/.background/background.tiff ]] || print -r -- "background $(tiffutil -info "$at/.background/background.tiff" 2>/dev/null | grep -c 'Image Width')"
+    print -r -- "names this run's folders: $(LC_ALL=C grep -c -aF -- "$W" "$at/.DS_Store" || true)"
+  } > "$W/dmg-shows" 2>&1
+  hdiutil detach -quiet "$at" 2>/dev/null || hdiutil detach -quiet -force "$at"
+}
+mounts=0
+shows() { grep -qE -- "$1" "$W/dmg-shows" }
+cask_has() { grep -qxF -- "$1" "$outdir/Casks/juiceisland.rb" }
 
 # --- local --------------------------------------------------------------------------------------------------------
 start "local: signs inside out and stops at a signed DMG"
@@ -207,6 +240,15 @@ check "Sparkle's own binaries are left as they are" \
   cmp -s "$outdir/work/build/Juice.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" "$work_app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 check "spctl may only say it is not notarized yet" called "^spctl --assess --type execute -vv $work_app\$"
 check "the DMG holds the app and an Applications link" eval '[[ -L $outdir/work/dmg/Applications && -d $outdir/work/dmg/Juice.app ]]'
+dmg_shows "$dmg"
+check "the DMG mounts, and its read-write image is gone" eval '[[ -s $W/dmg-shows && ! -e $outdir/work/rw.dmg ]]'
+check "nothing of the run is left mounted" eval '! hdiutil info | grep -qF -- "$outdir/work/rw.dmg"'
+check "its window: no toolbar or sidebar, 660 by 400" shows '^\. bwsp blob .*ShowSidebar=0 .*ShowToolbar=0 .*WindowBounds=\{\{200,120\},\{660,400\}\}'
+check "an icon view of 128-point icons over the background picture" shows '^\. icvp blob .*backgroundImageAlias backgroundType=2 .*iconSize=128 '
+check "the app on the left, Applications on the right, on the arrow's line" eval 'shows "^Juice\.app Iloc blob 16 170,190$" && shows "^Applications Iloc blob 16 490,190$"'
+check "the picture in both sizes, the app and the Applications link" eval 'shows "^background 2$" && shows "^link to /Applications$" && shows "^Juice\.app$"'
+check "no system bookmark of the picture, which would name this Mac" eval '! shows " pBBk "'
+check "the layout names no folder of this run" shows "^names this run's folders: 0$"
 
 start "local: a new commit raises the build number"
 before_count=$(count)
@@ -297,7 +339,17 @@ check "spctl accepts the DMG" called "^spctl --assess --type open --context cont
 check "Sparkle signs the stapled DMG" before "^stapler validate $dmg\$" "^sign_update $dmg\$"
 check "the release comes last" before "^sign_update " "^gh release create "
 check "the release: tag, assets, repository, commit, title, notes, latest" called \
-  "^gh release create v$version $dmg $outdir/appcast\\.xml --repo $R --target $head --title Juice $version --notes-file $outdir/notes\\.md --latest\$"
+  "^gh release create v$version $dmg $outdir/Juice\\.dmg $outdir/appcast\\.xml --repo $R --target $head --title Juice $version --notes-file $outdir/notes\\.md --latest\$"
+check "Juice.dmg is the notarized DMG, byte for byte" cmp -s "$dmg" "$outdir/Juice.dmg"
+check "the stable name is copied after stapling" eval '[[ -n "$(grep -xF -- "$dmg" "$W/calls.stapled")" ]]'
+check "the cask: the version and the DMG's SHA-256" eval 'cask_has "  version \"$version\"" && cask_has "  sha256 \"$(shasum -a 256 "$dmg" | cut -d" " -f1)\""'
+check "the cask downloads the versioned DMG" cask_has "  url \"https://github.com/$R/releases/download/v#{version}/Juice-#{version}.dmg\""
+check "the cask: auto_updates, a livecheck on the latest release, macOS 26" \
+  eval 'cask_has "  auto_updates true" && cask_has "    strategy :github_latest" && cask_has "  depends_on macos: \">= :tahoe\""'
+check "the cask zaps the app's own folders, read from the built app" \
+  eval 'cask_has "    \"~/Library/Application Support/com.example.juice\"," && cask_has "    \"~/Library/Group Containers/ABCDE12345.com.example.juice\"," && cask_has "    \"~/Library/Containers/com.example.juice.widget\"," && cask_has "  uninstall quit: \"com.example.juice\""'
+check "the cask is valid Ruby" ruby -c "$outdir/Casks/juiceisland.rb"
+check "the cask goes into the tap's clone" cmp -s "$tap/Casks/juiceisland.rb" "$outdir/Casks/juiceisland.rb"
 check "reads the release back" called "^gh release view v$version --repo $R --json assets"
 check "no tag in this repository" [ -z "$(git -C "$repo" tag -l 'v*')" ]
 appcast=$outdir/appcast.xml
@@ -340,6 +392,52 @@ check "first release" eval '[ $rc -eq 0 ] && grep -qxF "The first release." "$ou
 print -r -- "- Fixes the widget & more" > "$W/notes.md"
 release --publish --notes "$W/notes.md"
 check "notes from the file" eval '[ $rc -eq 0 ] && grep -qxF -- "- Fixes the widget & more" "$outdir/notes.md" && grep -qF "<li>Fixes the widget &amp; more</li>" "$outdir/appcast.xml"'
+
+start "publish: a headline names the release, and leaves the notes"
+print -l "# Answer Copilot from the notch" "" "- Copilot CLI's prompts in the island" > "$W/notes.md"
+release --publish --notes "$W/notes.md"
+check "succeeds" [ $rc -eq 0 ]
+check "titled by it" called "--title Juice $version: Answer Copilot from the notch --notes-file "
+check "the notes start after it" eval '[[ "$(sed -n 3p "$outdir/notes.md")" == "- Copilot CLI'"'"'s prompts in the island" ]] && ! grep -q "^# " "$outdir/notes.md"'
+
+start "publish: a release that lost Juice.dmg is caught"
+FAKE_GH=no-stable release --publish
+check "refused after the upload, saying what is missing" eval '[ $rc -eq 1 ] && said "has no Juice.dmg"'
+
+start "publish: the cask goes into the tap's clone, uncommitted, with the commands that publish it"
+(unset JI_RELEASE_TOOLS JI_RELEASE_FAKE_LOG; release --dry-run; print -r -- $rc > "$W/rc")
+check "a dry run leaves the tap alone" eval '[ $(<"$W/rc") -eq 0 ] && [ ! -e "$tap/Casks" ] && said "a real release would put it in $tap/Casks"'
+release --publish
+check "succeeds" [ $rc -eq 0 ]
+check "the cask is in the tap" cmp -s "$tap/Casks/juiceisland.rb" "$outdir/Casks/juiceisland.rb"
+check "nothing is committed or pushed there" [ "$(git -C "$tap" rev-list --count HEAD)" = 1 ]
+check "says how to publish it" said "commit -m \"juiceisland $version\" && git -C $tap push"
+keep_tap=1 release --check
+check "a tap with changes in Casks stops the next release" eval '[ $rc -eq 1 ] && said "has changes in Casks that are not committed"'
+git -C "$tap" remote set-url origin https://github.com/someone/other-tap.git
+release --check
+check "a clone of another repository is refused" eval '[ $rc -eq 1 ] && said "not of example/homebrew-tap"'
+git -C "$tap" remote set-url origin https://github.com/example/homebrew-tap.git
+# The README's first install line reads the tap: no release goes out before it exists (P990).
+mv "$tap" "$W/tap-away"
+release --check
+check "no tap clone: --check refuses, with the commands that make it" \
+  eval '[ $rc -eq 1 ] && said "gh repo create example/homebrew-tap --public" && said "git clone https://github.com/example/homebrew-tap.git $tap"'
+release --publish
+check "no tap clone: --publish stops before building" eval '[ $rc -eq 1 ] && said "No clone of example/homebrew-tap" && not_built'
+(unset JI_RELEASE_TOOLS JI_RELEASE_FAKE_LOG; release --dry-run; print -r -- $rc > "$W/rc")
+check "no tap clone: a dry run lists it and goes on" \
+  eval '[ $(<"$W/rc") -eq 0 ] && said "1 thing would stop a real release" && said "No clone of example/homebrew-tap"'
+mv "$W/tap-away" "$tap"
+
+start "local: another disk named Juice takes /Volumes/Juice"
+hdiutil create -quiet -volname Juice -size 1m -fs HFS+ "$W/other.dmg"
+other=$(hdiutil attach -nobrowse -noautoopen -noverify "$W/other.dmg" | awk -F'\t' '/\/Volumes\// {print $NF}' | tail -1)
+release
+check "refused, saying what to eject" eval '[ $rc -eq 1 ] && said "another disk named Juice is mounted"'
+check "and its own image is unmounted" eval '! hdiutil info | grep -qF -- "$outdir/work/rw.dmg"'
+[[ -z $other ]] || hdiutil detach -quiet "$other" || hdiutil detach -quiet -force "$other"
+rm -f "$W/other.dmg"
 
 start "publish: Apple refusing the app stops everything after it"
 FAKE_NOTARY=invalid release --publish
@@ -459,6 +557,7 @@ check "nothing would stop a real release" not_said "would stop a real release"
 check "its own stand-ins took every call" eval '[ -s "$dry/dry-run-calls" ] && [ ! -s "$W/calls" ]'
 check "it went as far as the release" grep -qE "^gh release create v$version " "$dry/dry-run-calls"
 check "a DMG and an appcast" eval '[ -s "$dry/Juice-$version.dmg" ] && /usr/bin/xmllint --noout "$dry/appcast.xml"'
+check "Juice.dmg and the cask too" eval 'cmp -s "$dry/Juice-$version.dmg" "$dry/Juice.dmg" && ruby -c "$dry/Casks/juiceisland.rb" >/dev/null'
 check "nothing was signed for real" eval '[[ "$(codesign -dv "$dry/work/Juice.app" 2>&1)" != *Authority=* ]]'
 (unset JI_RELEASE_TOOLS JI_RELEASE_FAKE_LOG; export FAKE_BUILD_NO_APPLE_EVENTS=1 JI_SIGNING_FILE=$W/none.xcconfig
  release --dry-run; print -r -- $rc > "$W/rc")

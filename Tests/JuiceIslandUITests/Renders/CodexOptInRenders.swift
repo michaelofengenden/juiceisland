@@ -20,7 +20,7 @@ struct CodexOptInRenders {
 
     /// A demo engine with the Codex session, its rollout's reviewer (the owner) and its request, held for the island and
     /// shown; the model's clock `elapsed` seconds on.
-    private func scene(elapsed: TimeInterval = 5, released: Bool = false,
+    private func scene(elapsed: TimeInterval = 5, released: Bool = false, window: Bool = false,
                        configure: (AppSettings) -> Void = { _ in }) async throws -> AppEnvironment {
         let now = DemoClock.now
         let feed = FixtureSessionFeed(scenario: .attention, now: now)
@@ -45,7 +45,7 @@ struct CodexOptInRenders {
         for _ in 0..<200 where engine.attentionHead(for: Self.session) == nil { try await Task.sleep(for: .milliseconds(5)) }
         let request = try #require(engine.attentionHead(for: Self.session))
         #expect(request.isHeldForIsland && request.isConfirmed && request.tool == .codex)
-        engine.islandShows(requestID: request.id)
+        if window { engine.windowShows(requestIDs: [request.id]) } else { engine.islandShows(requestID: request.id) }
         if released { engine.islandShows(requestID: nil) }
         let settings = AppSettings.ephemeral()
         settings.answerCodexOnIsland = true
@@ -102,6 +102,16 @@ struct CodexOptInRenders {
     @Test func heldCardDetailed() async throws {
         let env = try await scene { $0.islandStyle = .detailed }
         try card("O-card-codex-held-detailed", style: .islandDetailed, env: env)
+    }
+
+    /// Window mode (P1050): the window's Needs you card holds the request as the island's does, with the same No and
+    /// Yes and the time left along Yes's foot.
+    @Test func heldCardWindow() async throws {
+        let env = try await scene(window: true) { $0.showAs = .window }
+        guard case let .approval(card)? = env.sessions.card(for: Self.session) else { Issue.record("no approval card"); return }
+        #expect(card.isAnswerable && card.request?.holdEnds != nil)
+        try RenderHarness.renderHosted(WindowRootView(drawsTrafficLights: true).environment(\.sessionGlyphsAnimated, false),
+                                       "O-window-codex-held", size: CGSize(width: 1000, height: 560), env: env)
     }
 
     @Test func releasedCardIsland() async throws {

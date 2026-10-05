@@ -4,7 +4,8 @@ import Observation
 
 /// The one system-wide key, "jump to what needs you" (spec §4.4, §7 amendment 2), and the only file that registers a
 /// key with the system (guardrail check 4). It is registered only while Settings › Shortcuts has the switch on and a
-/// key recorded; with either missing nothing is registered and nothing is watched. A press jumps to the first session
+/// key recorded, and Keyboard shortcuts on (P1030); with any of them missing nothing is registered and nothing is
+/// watched. A press jumps to the first session
 /// that needs you, from any app. No event monitor and no event tap: the system hands over this one key's presses and
 /// no other key (a Carbon hot key and its handler on the app's own event target).
 @MainActor
@@ -56,7 +57,7 @@ final class GlobalJumpHotKey {
     /// Brings the registration in line with the settings and the keyboard layout.
     func apply() {
         guard !suspended else { return }
-        guard settings.globalJumpEnabled, let combo = settings.globalJumpKey.flatMap(KeyCombo.init(storage:)), combo.isAcceptable else {
+        guard settings.shortcutsEnabled, settings.globalJumpEnabled, let combo = settings.globalJumpKey.flatMap(KeyCombo.init(storage:)), combo.isAcceptable else {
             release()
             problem = nil
             return
@@ -84,6 +85,7 @@ final class GlobalJumpHotKey {
     private func observe() {
         guard started else { return }
         withObservationTracking {
+            _ = settings.shortcutsEnabled
             _ = settings.globalJumpEnabled
             _ = settings.globalJumpKey
         } onChange: { [weak self] in

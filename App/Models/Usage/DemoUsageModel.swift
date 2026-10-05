@@ -21,6 +21,9 @@ final class DemoUsageModel: UsageModel {
         case hetznerNoKey
         /// Research's 5-hour window reset 3 minutes ago, after its last read (P460).
         case windowReset
+        /// The README's shots: Main, Work and Home only, each with plenty left, and two money lines, so the shots read as
+        /// a Mac in good health and not as one owner's setup (P991).
+        case showcase
     }
 
     private(set) var panel: PanelModel
@@ -38,7 +41,12 @@ final class DemoUsageModel: UsageModel {
     var variant: Variant { didSet { rebuild() } }
 
     init(now: Date = DemoClock.now, variant: Variant = .standard) {
-        let accounts = DemoUsageData.accounts, records = DemoUsageData.records(now: now, resetPassed: variant == .windowReset)
+        let accounts = DemoUsageData.accounts.map { account in
+            var account = account
+            if variant == .showcase { account.monitored = DemoUsageData.showcase.contains(account.alias) }
+            return account
+        }
+        let records = DemoUsageData.records(now: now, resetPassed: variant == .windowReset)
         let money = DemoUsageData.money(variant: variant)
         self.now = now
         self.variant = variant
@@ -95,6 +103,9 @@ enum DemoUsageData {
         Account(provider: .codex, folder: "~/.codex-spare", alias: "Spare", knownEmail: "spare@example.com"),
         Account(provider: .codex, folder: "~/.codex-edge", alias: "Edge"),
     ]
+
+    /// The accounts the README's shots show (`Variant.showcase`).
+    static let showcase: Set<String> = ["Main", "Work", "Home"]
 
     /// Plan names as the account list shows them.
     static let plans: [String: String] = [
@@ -173,10 +184,10 @@ enum DemoUsageData {
     static func money(variant: DemoUsageModel.Variant = .standard, amber: Int = 72, red: Int = 24) -> [MoneySource] {
         func source(_ name: String, amount: String?, suffix: String? = nil, spent: Bool = false, parts: [String],
                     short: [String], runway: Double? = nil, credit: Double? = nil, key: String, denominator: String,
-                    read: String) -> MoneySource {
+                    read: String, word: String? = nil) -> MoneySource {
             let emphasis = MoneyDetail.tone(runwayHours: runway, amber: amber, red: red)
             let row = MoneyRowModel(id: name, name: name, amount: amount, suffix: suffix, isSpent: spent, emphasis: emphasis,
-                                    hoverLabel: ([name] + parts).joined(separator: " · "))
+                                    hoverLabel: ([name] + parts).joined(separator: " · "), word: word)
             return MoneySource(row: row, detail: MoneyDetail(id: name, parts: parts, shortParts: short, runwayHours: runway,
                                                              creditLeftShare: credit, keyFile: key, denominator: denominator,
                                                              lastRead: amount == nil ? "never" : read, isReadable: amount != nil))
@@ -194,17 +205,20 @@ enum DemoUsageData {
         }
         let hetzner: MoneySource = variant == .hetznerNoKey
             ? source("Hetzner", amount: nil, parts: ["no API token", "add one in Settings › Money"], short: ["no API token"],
-                     key: "~/.config/hcloud/token", denominator: "—", read: "never")
+                     key: "~/.config/hcloud/token", denominator: "—", read: "never", word: "No key")
             : source("Hetzner", amount: "€153", suffix: "/mo", parts: ["3 servers", "€0.21/h", "about €153 this month"],
                      short: ["this month", "3 servers"], key: "~/.config/hcloud/token", denominator: "3 servers · €0.21/h", read: "9m ago")
+        let anthropic = source("Anthropic", amount: "$354", parts: ["$354 left of $1,400 since 7 Sep", "$61 today"],
+                               short: ["left of $1,400", "$61 today"], credit: 0.25, key: "~/.config/anthropic/admin-key",
+                               denominator: "of $1,400 · 7 Sep", read: "2m ago")
+        let openAI = source("OpenAI", amount: "$212", spent: true, parts: ["$212 spent in September"], short: ["spent in September"],
+                            key: "~/.config/openai/admin-key", denominator: "no credit set", read: "4m ago")
+        if variant == .showcase { return [anthropic, openAI] }
         return [
             source("OpenRouter", amount: "$4,120", parts: ["$4,120 balance", "$38.20 today"], short: ["$38.20 today"],
                    key: "~/.config/openrouter/key", denominator: "balance", read: "2m ago"),
-            source("Anthropic", amount: "$354", parts: ["$354 left of $1,400 since 7 Sep", "$61 today"],
-                   short: ["left of $1,400", "$61 today"], credit: 0.25, key: "~/.config/anthropic/admin-key",
-                   denominator: "of $1,400 · 7 Sep", read: "2m ago"),
-            source("OpenAI", amount: "$212", spent: true, parts: ["$212 spent in September"], short: ["spent in September"],
-                   key: "~/.config/openai/admin-key", denominator: "no credit set", read: "4m ago"),
+            anthropic,
+            openAI,
             runPod,
             hetzner,
         ]

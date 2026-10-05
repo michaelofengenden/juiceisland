@@ -141,6 +141,8 @@ final class Banners {
     /// The screen is locked or the owner's session switched out (`ScreenLockWatch.isAway`): with Quiet while locked on,
     /// nothing pops up (P422).
     @ObservationIgnored var away: @MainActor () -> Bool = { false }
+    /// The screen mirrored or a Focus that quiets (`QuietScenes`): nothing pops up (P1005).
+    @ObservationIgnored var scene: @MainActor () -> QuietScene = { .none }
     /// Opens System Settings' Notifications page for this app.
     @ObservationIgnored var openSystemSettings: @MainActor () -> Void = Banners.openNotificationSettings
     /// The banners Notification Center may still show.
@@ -234,7 +236,7 @@ final class Banners {
     /// check), unless the window is in front or Quiet hours hold.
     func released(_ signal: EngineSignal) {
         guard settings.notificationBanners, center != nil, settings.showAs == .window, !windowFront(),
-              !QuietMode.holdsAttention(settings, fullScreen: false, away: away(), now: clock()) else { return }
+              !QuietMode.holdsAttention(settings, fullScreen: false, away: away(), scene: scene(), now: clock()) else { return }
         switch signal {
         case let .needsYou(id): post(.needsYou(id))
         case let .done(id): post(.finished(id))

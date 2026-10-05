@@ -21,6 +21,7 @@ struct WindowRootView: View {
                 .overlay(alignment: .bottom) { WindowTheme.hairline.frame(height: 1) }
             HookDriftRows()
             WhatsNewCard()
+            NewAgentsLine()
             SessionListView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }

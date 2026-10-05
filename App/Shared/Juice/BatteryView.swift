@@ -15,9 +15,12 @@ struct BatteryView: View {
     /// The account the owner's sessions run in (`AccountsInUse`, P811): a small dot over the body, no words.
     var inUse = false
     @Environment(\.panelActions) private var actions
+    /// Drawing the copy that casts Widget's full-colour ink shadow (P1206): the track and a stale fill, veils, cast none.
+    @Environment(\.inkShadowPass) private var shadowPass
 
     private typealias M = Theme.Battery
     private var palette: PanelPalette { theme.panel }
+    private var track: Color { shadowPass ? .clear : palette.track }
 
     var body: some View {
         cell
@@ -66,9 +69,9 @@ struct BatteryView: View {
     /// The body and its content: on glass in a group of its own, its cuts showing the glass behind it (`BatteryCut`).
     @ViewBuilder private var cell: some View {
         if theme.knocksOut {
-            layers(cut: BatteryKnockOut(), track: palette.track).batteryCutGroup()
+            layers(cut: BatteryKnockOut(), track: track).batteryCutGroup()
         } else {
-            layers(cut: EmptyModifier(), track: palette.track)
+            layers(cut: EmptyModifier(), track: track)
         }
     }
 
@@ -89,7 +92,7 @@ struct BatteryView: View {
             RoundedRectangle(cornerRadius: M.radius).strokeBorder(palette.line, lineWidth: M.outline)
         case .stale(let last):
             // The band is the surface's black on Black, knocked out on glass (its colour then only its shape).
-            filledBody(percent: last ?? 0, colour: palette.ink.opacity(0.35), track: track)
+            filledBody(percent: last ?? 0, colour: shadowPass ? .clear : palette.ink.opacity(0.35), track: track)
                 .overlay { Rectangle().fill(Theme.surface).frame(width: 5, height: M.height + 6).rotationEffect(.degrees(25)).modifier(cut) }
                 .overlay { Rectangle().fill(palette.ink).frame(width: 1.5, height: M.height + 4).rotationEffect(.degrees(25)) }
         case .available(let left, let isLow):

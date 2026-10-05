@@ -18,7 +18,7 @@
 #   FAKE_NOTARY=chatty        a line of progress comes before the answer
 #   FAKE_NO_SPARKLE_KEY=1     no Sparkle key in the keychain
 #   FAKE_SPARKLE_KEY=<key>    the keychain's Sparkle public key (default the fake app's)
-#   FAKE_GH=logged-out|no-repo|private|tag-exists|create-fails
+#   FAKE_GH=logged-out|no-repo|private|tag-exists|create-fails|no-stable (the release keeps no Juice.dmg)
 #   FAKE_GH_HEAD=<sha>        the public repository's main (default this repository's HEAD)
 #   FAKE_GH_LATEST=<tag>      the last release (default none)
 #   FAKE_GH_LATEST_SHA=<sha>  that release's commit
@@ -131,7 +131,10 @@ case $tool in
         fi ;;
       ("release create")
         [[ "${FAKE_GH-}" != create-fails ]] || { print -u2 "HTTP 422: Validation Failed"; exit 1 }
-        for a in "${@[3,-1]}"; do [[ "$a" != *.dmg && "$a" != *.xml ]] || print -r -- "${a:t}" >> "$log.assets"; done
+        for a in "${@[3,-1]}"; do
+          [[ "$a" != *.dmg && "$a" != *.xml ]] || [[ "${FAKE_GH-}" == no-stable && "${a:t}" == Juice.dmg ]] \
+            || print -r -- "${a:t}" >> "$log.assets"
+        done
         print -r -- "https://github.com/${${@[${@[(i)--repo]}+1]}}/releases/tag/$3" ;;
     esac ;;
   (*) print -u2 "release-fake: no stand-in for $tool"; exit 2 ;;

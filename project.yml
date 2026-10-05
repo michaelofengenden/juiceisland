@@ -1,8 +1,9 @@
 name: JuiceIsland
 
-# The app target is only App/Main/main.swift plus the app icon (App/Main/Resources/Assets.xcassets, drawn by
-# scripts/make-icon.swift). Everything it draws is the SwiftPM library JuiceIslandUI (App/ minus App/Main, in the root
-# Package.swift), so streams render and test with `swift test` and never edit this file.
+# The app target is only App/Main/main.swift, the Focus filter (App/Main/QuietFocusFilter.swift, P1006) and the app
+# icon (App/Main/Resources/Assets.xcassets, drawn by scripts/make-icon.swift). Everything it draws is the SwiftPM library
+# JuiceIslandUI (App/ minus App/Main, in the root Package.swift), so streams render and test with `swift test` and never
+# edit this file.
 # Build: xcodegen generate && xcodebuild -project JuiceIsland.xcodeproj -scheme JuiceIsland -configuration Debug \
 #          -derivedDataPath output/dd.noindex CODE_SIGNING_ALLOWED=NO build
 # The widget extension (spec §4.7) is Widget/ alone, its @main bundle; its views and timeline are JuiceIslandUI's

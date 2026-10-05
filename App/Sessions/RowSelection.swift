@@ -19,6 +19,13 @@ enum RowSelection {
         return ids[index + 1]
     }
 
+    /// The switcher's step back, ⇧ with the system-wide key (P1033): the row before `current`, the last after the first
+    /// (or with none selected, or one no longer listed).
+    static func cycledBack(_ current: String?, in ids: [String]) -> String? {
+        guard let current, let index = ids.firstIndex(of: current), index > 0 else { return ids.last }
+        return ids[index - 1]
+    }
+
     /// What Return does on the keys' row: its card opens, as a click on it does, and a row with none jumps (P321);
     /// opened by the system-wide key set to Switch sessions, it jumps whatever the row is (P462).
     enum ReturnAction: Equatable { case openCard, jump }
@@ -64,6 +71,18 @@ enum RowSelection {
         let move = islandMove(current, sessions: sessions, style: style, showAll: showAll, by: 1)
         if let row = move.row, row.id != current { return move }
         return (islandOrder(sessions, style: style, showAll: showAll).shown.first, false)
+    }
+
+    /// ⇧ with the system-wide key in Switch sessions (P1033): ↑'s move, and from the first row the last row of all, the
+    /// rows behind the footer shown first, as the switcher's way forward reaches them.
+    @MainActor static func islandSwitchBack(_ current: String?, sessions: any SessionsModel, style: IslandStyle,
+                                            showAll: Bool) -> (row: SessionRow?, showsAll: Bool) {
+        let layout = islandOrder(sessions, style: style, showAll: showAll)
+        if let current, let index = layout.shown.firstIndex(where: { $0.id == current }), index > 0 {
+            return (layout.shown[index - 1], false)
+        }
+        guard layout.showsFooter else { return (layout.shown.last, false) }
+        return (islandOrder(sessions, style: style, showAll: true).shown.last, true)
     }
 }
 

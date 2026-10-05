@@ -43,6 +43,7 @@ extension SessionEngine {
     func ingest(note: HookContextNote) {
         guard ignoredSessionIDs[note.sessionID] == nil else { return }
         let now = dependencies.now()
+        let turnBegins = Self.beginsUnpromptedTurn(note, lastEvent: hookNotes.contexts[note.sessionID]?.lastEvent)
         hookNotes.record(note, at: now)
         // A fork (`/branch`) goes on in the same process under a new id; its parent is left there with no SessionEnd (P441).
         if note.event == "SessionStart", note.sessionStartSource == Self.forkSource, note.agentID == nil, let pid = note.agentPID {
@@ -51,6 +52,11 @@ extension SessionEngine {
         toolFlights.record(note, at: now)
         noteScope(from: note)
         attentionEvidence(note: note, now: now)
+        noteAgentLabel(note)
+        if turnBegins {
+            promptedSessionIDs.insert(note.sessionID)
+            signals.turnBegan(note.sessionID)
+        }
         if note.agentID == nil { keepLabels(note.sessionID) }
         noteClaudeSubagents(note, now: now)
         noteCodexWake(note, now: now)
@@ -124,9 +130,40 @@ extension SessionEngine {
     /// so nothing of it builds up over a long run.
     func forgetHookNotes(_ sessionID: String) {
         hookNotes.forget(sessionID)
+        if agentLabels[sessionID] != nil { agentLabels[sessionID] = nil }
         toolFlights.forget(sessionID)
         clearTurnFailure(sessionID)
         if turnLimits[sessionID] != nil { turnLimits[sessionID] = nil }
+    }
+
+    // MARK: Agents (P913)
+
+    /// The note names the session's real agent: Copilot and Devin, whose hooks the bridge files under a Claude-format
+    /// fork's tool, and an agent behind Claude's hooks (`HookCaller`). Claude's and Codex's own words say nothing more
+    /// than their tool does.
+    func noteAgentLabel(_ note: HookContextNote) {
+        guard note.agentID == nil, let kind = AgentKind(source: note.agentSource), kind != .claude, kind != .codex,
+              agentLabels[note.sessionID] != kind else { return }
+        agentLabels[note.sessionID] = kind
+    }
+
+    /// The session's own agent: a label its notes gave (kept across a relaunch with its other labels), Kilo by its session
+    /// id, else its tool. A label is taken only where it fits the session's tool (its own carrier, or the Claude-format
+    /// fork's the helper files other agents under), so no note ever turns a Claude Code or Codex session into another.
+    public func agent(of session: AgentSession) -> AgentKind {
+        let label = agentLabels[session.id] ?? labelBook.labels(for: session.id)?.agent.flatMap(AgentKind.init(rawValue:))
+        if let label, label.carrierTool == session.tool || session.tool == .codebuddy { return label }
+        if session.tool == .openCode, let kind = AgentKind.fromSessionID(session.id) { return kind }
+        return AgentKind(tool: session.tool)
+    }
+
+    /// Antigravity CLI's hooks carry no prompt (P1107): its first model call since its last Stop (or its first ever)
+    /// begins the owner's turn, as a prompt would. The session then shows (P155), and the turn is counted, so each
+    /// turn's Done is its own (P5). Read from its notes alone, which come in the order agy runs its hooks.
+    static func beginsUnpromptedTurn(_ note: HookContextNote, lastEvent: String?) -> Bool {
+        guard note.agentID == nil, note.agentSource == AgentKind.antigravity.rawValue,
+              note.event == AntigravityHooks.Event.preInvocation.rawValue else { return false }
+        return lastEvent == nil || lastEvent == AntigravityHooks.Event.stop.rawValue
     }
 
     // MARK: Reading

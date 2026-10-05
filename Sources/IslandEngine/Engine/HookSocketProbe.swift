@@ -25,11 +25,12 @@ public enum HookSocketProbe {
         }
     }
 
-    /// The configured socket, Open Island's primary socket and the legacy `/tmp` one, which every `BridgeServer`
-    /// also binds.
+    /// The paths a `BridgeServer` on `socketURL` binds: that socket and the legacy `/tmp` one, which every
+    /// `BridgeServer` also binds. Open Island's own socket is one of them only when the bridge is on it; the app's own
+    /// home socket leaves it to Open Island and to the relay (P900, P911).
     public static func paths(for socketURL: URL) -> [URL] {
         var seen: Set<String> = []
-        return [socketURL, BridgeSocketLocation.defaultURL, BridgeSocketLocation.legacyURL].filter { seen.insert($0.path).inserted }
+        return [socketURL, BridgeSocketLocation.legacyURL].filter { seen.insert($0.path).inserted }
     }
 
     /// Probes once, and once more after `recheckAfter` when the answer is ECONNREFUSED: on macOS a live listener

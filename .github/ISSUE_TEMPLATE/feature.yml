@@ -1,0 +1,42 @@
+name: An idea
+description: Something Juice could do, or do better.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want to do
+      description: The job, in your own words, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How it could work
+      description: Optional. A sketch, a setting, or another app that does it well.
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      description: Optional. The agent it is about, if one.
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Copilot CLI
+        - Cursor
+        - Qwen Code
+        - Devin
+        - Kilo
+        - Gemini CLI
+        - Antigravity
+        - Grok Build
+        - Qoder
+        - CodeBuddy
+        - Factory Droid
+        - Kimi Code
+        - Pi
+        - Oh My Pi
+        - Amp
+        - An agent Juice does not connect yet
+        - None

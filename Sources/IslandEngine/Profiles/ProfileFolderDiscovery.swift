@@ -25,6 +25,23 @@ public enum ProfileFolderDiscovery {
         return found
     }
 
+    /// The providers whose profile `folder` is by the same rule as a found one, wherever it is (Settings › Accounts › Add
+    /// folder…, P1055): a `.claude.json` for Claude, a `config.toml` or the Codex login file for Codex. Existence only:
+    /// nothing in it is opened. Empty for a folder that is neither, both for one that holds both.
+    public static func providers(ofFolderAt folder: String, fileManager: FileManager = .default) -> [Provider] {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue else { return [] }
+        return Provider.allCases.filter { isProfile(folder, provider: $0, fileManager: fileManager) }
+    }
+
+    /// Whether discovery by name finds `folder` (`~/.claude`, `~/.claude-*`, `~/.codex`, `~/.codex-*` in `home`): a folder
+    /// it does not is one only Add Folder… brings in.
+    public static func isFoundByName(_ folder: String, home: String = NSHomeDirectory(), flavor: AppFlavor = .current) -> Bool {
+        let url = URL(fileURLWithPath: folder).standardizedFileURL
+        guard url.deletingLastPathComponent().path == URL(fileURLWithPath: home).standardizedFileURL.path else { return false }
+        return provider(ofFolderNamed: url.lastPathComponent, flavor: flavor) != nil
+    }
+
     static func provider(ofFolderNamed name: String, flavor: AppFlavor = .current) -> Provider? {
         for provider in Provider.allCases where name == provider.defaultFolderName || name.hasPrefix(provider.defaultFolderName + "-") {
             if provider == .claude, ProfileDiscovery.ignoredClaudePrefixes(for: flavor).contains(where: name.hasPrefix) { return nil }

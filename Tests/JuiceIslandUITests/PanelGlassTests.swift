@@ -184,9 +184,10 @@ struct PanelGlassTests {
 
     /// The real window's layers (the live path, less the glass the window server adds): behind the glass is the floor
     /// alone, never the shadow's caster, and the cuts show the floor, never a hole to the desktop; Black is the opaque
-    /// black. Glass under Glass look Widget (the default) has Frost's dark ground at its floor inside the glass (P874),
-    /// and its cuts show that; under Light and dark nothing. The background still moves the window when unlocked, in
-    /// every theme.
+    /// black. Glass under Glass look Widget (the default) has Frost's dark ground inside the glass from the floor of the
+    /// desktop widgets' look of the moment, which the window follows (P1214), and its cuts show that (deepened by the
+    /// ink's lift, never a hole); under Light and dark nothing. The background moves the window when unlocked, in every
+    /// theme.
     @Test func theRealWindowsLayersKeepTheFloorAndTheCuts() throws {
         _ = NSApplication.shared
         let cases = JuiceTheme.allCases.map { ($0, GlassLookChoice.widget) } + [(JuiceTheme.glass, GlassLookChoice.lightAndDark)]
@@ -208,8 +209,12 @@ struct PanelGlassTests {
             rep.size = size
             host.cacheDisplay(in: host.bounds, to: rep)
             // Glass lays nothing of its own under the content (its glass is the window server's, absent headless): no
-            // floor, no black, and its cuts show that same nothing; under Widget, Frost's dark ground at its floor.
-            let glass = look == .widget ? GlassFrost.widgetOpacity(env.settings.glassFrost) : 0
+            // floor, no black, and its cuts show that same nothing; under Widget, Frost's dark ground at the floor of the
+            // widgets' look the window follows (the frontmost app's: dimmed, or full colour with Finder in front).
+            let state = window.widgets?.state ?? .overApps
+            #expect(state.onDesktop)
+            let glass = look == .widget ? GlassFrost.widgetOpacity(env.settings.glassFrost, state: state) : 0
+            let lifted = theme == .glass && look == .widget
             let surface = theme == .smoke ? GlassStyle.panel.floor : theme == .glass ? glass : 1
             // The band under the divider, the right strip; the demo's 100 % battery's digits (all on the fill).
             for p in [(200.0, 119.0), (378, 60)] {
@@ -217,10 +222,21 @@ struct PanelGlassTests {
             }
             var lowest = 1.0
             for y in Int(2 * 48.5)..<Int(2 * 60.5) { for x in Int(2 * 125)..<Int(2 * 159) { lowest = min(lowest, Self.rgba(rep, x, y).a) } }
-            #expect(abs(lowest - surface) < 0.02, "\(theme) \(look): the cuts show \(lowest), the surface is \(surface)")
+            #expect(lifted ? lowest > surface - 0.02 : abs(lowest - surface) < 0.02, "\(theme) \(look): the cuts show \(lowest), the surface is \(surface)")
+            // Unlocked, a press on the band under the divider and a move drag the window itself (P1200).
             window.movesByDragging = true
-            let hit = host.hitTest(CGPoint(x: 200, y: size.height - 119))
-            #expect(hit?.mouseDownCanMoveWindow == true, "\(theme)")
+            let start = window.frame.origin
+            var at = CGPoint(x: window.frame.minX + 200, y: window.frame.maxY - 119)
+            window.pointer = { at }
+            func send(_ type: NSEvent.EventType) {
+                _ = window.handle(NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+            send(.leftMouseDown)
+            at.x += 30
+            send(.leftMouseDragged)
+            send(.leftMouseUp)
+            #expect(window.frame.origin == CGPoint(x: start.x + 30, y: start.y), "\(theme)")
         }
     }
 

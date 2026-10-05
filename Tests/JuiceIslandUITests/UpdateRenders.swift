@@ -103,6 +103,19 @@ struct UpdateRenders {
         try renderAbout("U-settings-about-building", env: Self.env(phase: .building))
     }
 
+    /// A background prepare holds the update lock (P895): the control says it waits, About's line the step in full.
+    @Test func aboutWaiting() throws {
+        try renderAbout("U-settings-about-waiting", env: Self.env(phase: .waiting))
+    }
+
+    /// Past the estimate on a busy Mac (P897): "Still building", and why under the changes.
+    @Test func aboutStillBuilding() throws {
+        let checker = UpdateChecker(stamp: Self.stamp, git: NoGitRunner(), state: .checked(Self.info, at: Self.checkedAt))
+        let controller = UpdateController(repoPath: Self.stamp.repoPath, phase: .building,
+                                          progress: UpdateProgress(fraction: UpdateProgress.buildEnd, overran: true, busy: true))
+        try renderAbout("U-settings-about-still-building", env: .demo(sessions: .prototype, updateChecker: checker, updateController: controller))
+    }
+
     @Test func aboutInstalling() throws {
         try renderAbout("U-settings-about-installing", env: Self.env(phase: .installing))
     }

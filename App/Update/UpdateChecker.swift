@@ -57,6 +57,9 @@ final class UpdateChecker {
     @ObservationIgnored var checked: @MainActor () -> Void = {}
     /// The public flavor's feed: Check now and the daily check are its own (`FeedUpdates.join`).
     @ObservationIgnored var feed: FeedUpdates?
+    /// The version the feed downloaded by itself, which installs when the app quits whatever Install automatically says
+    /// by then (Sparkle's rule, P1074); nil while none waits. About's line names it (W3R-6).
+    var installsOnQuit: String?
     /// A public build made without the feed's key: updates are off, and About says so.
     let off: Bool
 

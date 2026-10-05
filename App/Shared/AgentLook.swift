@@ -1,3 +1,4 @@
+import IslandHookNotes
 import OpenIslandCore
 import SwiftUI
 
@@ -17,6 +18,8 @@ struct AgentLook: Equatable, Sendable {
         case spark
         /// A pointer arrow (Cursor).
         case pointer
+        /// An arrowhead pointing up, its base notched (Antigravity CLI, P1108).
+        case rise
         /// A letter cut out of a rounded tile.
         case tile(String)
         /// A letter cut out of a disc: the second agent with a letter a tile already has (Qoder after Qwen, Oh My Pi
@@ -54,8 +57,33 @@ struct AgentLook: Equatable, Sendable {
         case .claude: AgentLook(name: "Claude", mark: .claude, colour: IslandTheme.agentClaude)
         case .codex: AgentLook(name: "Codex", mark: .openAI, colour: IslandTheme.agentCodex)
         case let .other(tool): of(tool)
+        case let .kind(kind): of(kind: kind)
         }
     }
+
+    /// An agent the engine labels from its hooks (P913): its own entry where it has no tool of its own, else its tool's.
+    static func of(kind: AgentKind) -> AgentLook {
+        guard let entry = kinds[kind], let hex = kindColours[kind] else { return of(kind.carrierTool) }
+        return AgentLook(name: entry.name, mark: entry.mark, colour: colour(hex: hex) ?? neutral)
+    }
+
+    /// The agents upstream's engine has no tool for (P926): a letter on a tile, or on a disc where a tile has that letter
+    /// already (CodeBuddy's C, Kimi's K), or a plain shape of Juice's (Antigravity's arrowhead, P1108). Never a vendor's
+    /// logo.
+    static let kinds: [AgentKind: Entry] = [
+        .copilot: Entry(name: "Copilot", mark: .disc("C")),
+        .devin: Entry(name: "Devin", mark: .tile("D")),
+        .kilo: Entry(name: "Kilo", mark: .disc("K")),
+        .antigravity: Entry(name: "Antigravity", mark: .rise),
+        .amp: Entry(name: "Amp", mark: .tile("A")),
+    ]
+
+    /// Their colours, each at least CIEDE2000 12 from every other agent's and every state's, in every Needs you colour
+    /// (P207, P926; `AgentLookTests` works them out), and light enough to read on black. Antigravity's peach is 15.6 from
+    /// the nearest (OpenCode's silver, CodeBuddy's salmon, P1108); Amp's taupe is 17.5 from the nearest, and as far from
+    /// wave 4's other new colours (P1163).
+    static let kindColours: [AgentKind: String] = [.copilot: "#13b6bf", .devin: "#bf9c13", .kilo: "#babf69",
+                                                   .antigravity: "#f0ccb8", .amp: "#a9987e"]
 
     /// Any tool; `table` is `others` (tests pass another to see an agent it does not list).
     static func of(_ tool: AgentTool, table: [AgentTool: Entry] = others) -> AgentLook {
@@ -152,6 +180,7 @@ struct AgentShapeMark: View {
         switch mark {
         case .spark: SparkShape().fill(ink)
         case .pointer: PointerShape().fill(ink)
+        case .rise: RiseShape().fill(ink)
         case let .tile(letter): cutOut(letter, side: side) { RoundedRectangle(cornerRadius: side * 0.24, style: .continuous) }
         case let .disc(letter): cutOut(letter, side: side) { Circle() }
         case .claude, .openAI: EmptyView()
@@ -193,6 +222,22 @@ struct SparkShape: Shape {
         path.addQuadCurve(to: bottom, control: CGPoint(x: c.x + pull, y: c.y + pull))
         path.addQuadCurve(to: left, control: CGPoint(x: c.x - pull, y: c.y + pull))
         path.addQuadCurve(to: top, control: CGPoint(x: c.x - pull, y: c.y - pull))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// An arrowhead pointing up, its base notched (on a 24-unit grid, centred): Antigravity CLI's own mark, not its logo.
+struct RiseShape: Shape {
+    static let points: [CGPoint] = [
+        CGPoint(x: 12, y: 2), CGPoint(x: 21.5, y: 21.5), CGPoint(x: 12, y: 16.5), CGPoint(x: 2.5, y: 21.5),
+    ]
+
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height), unit = side / 24
+        let origin = CGPoint(x: rect.midX - side / 2, y: rect.midY - side / 2)
+        var path = Path()
+        path.addLines(Self.points.map { CGPoint(x: origin.x + $0.x * unit, y: origin.y + $0.y * unit) })
         path.closeSubpath()
         return path
     }

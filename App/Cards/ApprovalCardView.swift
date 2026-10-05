@@ -23,27 +23,30 @@ struct ApprovalCardView: View {
     var style: CardStyle = .window
     @Environment(AppEnvironment.self) private var env
     @Environment(\.previewReasonField) private var previewReason
+    @Environment(\.cardKeys) private var keys
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // A prompt with no hook behind it has nothing to show: its header says what and where.
             if !card.isNotice {
                 ApprovalBodyView(content: card.body, maxLines: style.codeLines)
-                if let reason = card.reason { CardReasonLine(text: reason).padding(.top, 4) }
+                if let reason = Self.reason(card.reason, headerBranch: headerBranch) { CardReasonLine(text: reason).padding(.top, 4) }
             }
             if card.isAnswerable {
                 DenyChoices(sessionID: card.sessionID, request: card.request?.id, canStop: card.canStop, send: card.send, style: style,
                             noTitle: "No", reasonPrompt: "Tell \(card.agent.displayName) what to do instead…",
                             startsWithReason: previewReason, holdEnds: card.request?.holdEnds) {
-                    CardActionButton(title: "Yes", key: "⌃A", primary: true, fills: style.buttonsFill) { decide(.allowOnce) }
+                    CardActionButton(title: "Yes", key: keys.hint(.allow), primary: true, fills: style.buttonsFill) { decide(.allowOnce) }
                         // A subagent's request the island holds: the time left before its card turns read-only (P350).
                         .overlay { if let ends = card.request?.holdEnds { HoldCountdown(ends: ends).id(card.request?.id) } }
                     if let label = card.alwaysAllowLabel {
-                        CardActionButton(title: Self.shortTitle(label), key: "⌃⇧A", help: Self.buttonTitle(label),
+                        CardActionButton(title: Self.shortTitle(label), key: keys.hint(.alwaysAllow), help: Self.buttonTitle(label),
                                          fills: style.buttonsFill) { decide(.alwaysAllow) }
                     }
                     ModeButtons(modes: card.modes, plan: false, fills: style.buttonsFill, decide: decide)
                 }
+                // Allow all and Deny all, while two or more approvals wait (P1031); the window has them on its Needs you line.
+                if style.isIsland { IslandAnswerAll(card: card) }
             } else {
                 // Read-only: the agent's own prompt is where it is answered (the needs-you design §3.5).
                 ReadOnlyActions(sessionID: card.sessionID, request: card.request, style: style,
@@ -53,6 +56,20 @@ struct ApprovalCardView: View {
     }
 
     private func decide(_ decision: ApprovalDecision) { env.sessions.approve(card.sessionID, decision, request: card.request?.id) }
+
+    /// The branch a Clean card's header says with Show branch on (P1015), which the reason line then leaves out.
+    private var headerBranch: String? {
+        guard style == .islandClean, let row = env.sessions.row(id: card.sessionID) else { return nil }
+        return CleanRowShown(row, settings: env.settings).branch
+    }
+
+    /// The reason line without "branch <name>" when the header names that branch already (every fact once); nil when
+    /// nothing is left.
+    static func reason(_ reason: String?, headerBranch: String?) -> String? {
+        guard let reason, let headerBranch else { return reason }
+        let kept = reason.components(separatedBy: " · ").filter { $0 != "branch \(headerBranch)" }.joined(separator: " · ")
+        return kept.isEmpty ? nil : kept
+    }
 
     /// Claude's own words, minus the "/" upstream appends to every rule as if it were a folder: a Bash rule such as
     /// `git push:*` reads "Yes, allow running git push:*", not "…git push:*/", also before a scope ("…git push:*
@@ -105,6 +122,7 @@ struct DenyChoices<Others: View>: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.optionKeyHeld) private var optionHeld
     @Environment(\.cardDraftSlot) private var draftSlot
+    @Environment(\.cardKeys) private var keys
     @State private var reasoning = false
 
     var body: some View {
@@ -117,7 +135,8 @@ struct DenyChoices<Others: View>: View {
                 .padding(.top, send == nil ? top : 6)
             } else {
                 CardActionsRow(fills: style.buttonsFill, top: send == nil ? top : 6) {
-                    CardActionButton(title: optionHeld ? noTitle + "…" : noTitle, key: "⌃D", tip: Self.tip(canStop: canStop),
+                    CardActionButton(title: optionHeld ? noTitle + "…" : noTitle, key: keys.hint(.deny),
+                                     tip: Self.tip(canStop: canStop, stopKey: keys.hint(.denyAndStop)),
                                      refuses: true, fills: style.buttonsFill) {
                         if NSEvent.modifierFlags.contains(.option) {
                             reasoning = true
@@ -141,9 +160,10 @@ struct DenyChoices<Others: View>: View {
         if !reasoning, draftSlot?.text(for: reasonPrompt) != nil { reasoning = true }
     }
 
-    /// The No button's tooltip: the other ways to say no.
-    static func tip(canStop: Bool) -> String {
-        canStop ? "⌥-click to say why · ⌃⇧D to stop the turn" : "⌥-click to say why"
+    /// The No button's tooltip: the other ways to say no (No and stop's key only while the keys are on).
+    static func tip(canStop: Bool, stopKey: String? = CardKeys.standard.display(.denyAndStop)) -> String {
+        guard canStop, let stopKey else { return "⌥-click to say why" }
+        return "⌥-click to say why · \(stopKey) to stop the turn"
     }
 }
 

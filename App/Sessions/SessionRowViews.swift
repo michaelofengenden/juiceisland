@@ -235,10 +235,19 @@ struct CleanRowView: View {
             VStack(alignment: .leading, spacing: 0) {
                 RowTitleLine(row: row, size: size.text(12), markSize: Theme.Mark.sessionRow).lineBox(size.line(18, for: 12))
                 if !oneLine {
-                    Group {
-                        if let cardStatus { DetailedRowView.statusText(cardStatus, palette: palette, needsYou: needsYou).font(Fonts.sys(size.text(11))) } else { status }
+                    // The list row's Show branch and Show model tags too (P1015), so a tapped row and its header match.
+                    let shown = CleanRowShown(row, settings: env.settings)
+                    HStack(spacing: 12) {
+                        Group {
+                            if let cardStatus { DetailedRowView.statusText(cardStatus, palette: palette, needsYou: needsYou).font(Fonts.sys(size.text(11))) } else { status }
+                        }
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .keepsWhole(shown.isEmpty ? nil : cardStatus?.word ?? SessionRowText.cleanStatus(row).word,
+                                    font: Fonts.sys(size.text(11)))
+                        if !shown.isEmpty { CleanRowTags(shown: shown).layoutPriority(1) }
                     }
-                    .lineLimit(1).truncationMode(.tail).lineBox(size.line(17, for: 11))
+                    .lineBox(size.line(17, for: 11))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

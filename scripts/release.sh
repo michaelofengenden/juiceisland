@@ -5,7 +5,8 @@
 #                                      but the signing timestamp's request to Apple.
 #   zsh scripts/release.sh --publish   the same, then notarizes and staples the app, makes the DMG from it,
 #                                      notarizes and staples the DMG, signs it for Sparkle, writes the appcast and
-#                                      creates the GitHub Release v<VERSION> on PUBLIC_REPO with the DMG and appcast.
+#                                      creates the GitHub Release v<VERSION> on PUBLIC_REPO with the DMG, the same DMG
+#                                      as Juice.dmg, and the appcast; then writes the Homebrew cask into the tap.
 #   zsh scripts/release.sh --dry-run   the whole --publish run with stand-ins (scripts/release-fake.zsh) for
 #                                      codesign, notarytool, stapler, spctl, the keychain's identity list, Sparkle's
 #                                      sign_update and generate_keys, and gh. The build and the DMG are real; nothing
@@ -14,7 +15,9 @@
 #   zsh scripts/release.sh --check     the preflight for --publish alone, then stops.
 #   --notes <file>                     the release notes, in Markdown ("- " lines become a list), in place of the
 #                                      commit subjects since the last release. --publish asks for it when those
-#                                      subjects are only the export's ("Update the Juice source for 0.2.0").
+#                                      subjects are only the export's ("Update the Juice source for 0.2.0"). A first
+#                                      line "# <headline>" names what is new: the release is titled
+#                                      "Juice <version>: <headline>", and the line leaves the notes.
 #
 # What it reads:
 #   VERSION                   the version, like 1.2.0. The build number is the commit count of HEAD, so it rises
@@ -34,7 +37,11 @@
 #                                                       such identity for the team)
 #                               JUICE_NOTARY_PROFILE    notarytool's keychain profile (default juice-notary)
 #                               JUICE_SPARKLE_ACCOUNT   the keychain account of the Sparkle key (default Sparkle's)
+#                               JUICE_TAP_DIR           the clone of the Homebrew tap, <owner>/homebrew-tap (default
+#                                                       ../homebrew-tap beside this folder)
 #   PUBLIC_REPO               the environment first, then the signing file, else public-settings.sh's default.
+#   scripts/dmg/              the DMG's background (scripts/make-dmg-art.swift draws it); scripts/dmg-layout.swift lays
+#                             the DMG out, built once with swiftc into output/release.noindex/tools/.
 #
 # The run, in order:
 #   1. Preflight: everything missing is listed at once, each with how to make it. Every gh call names the repository.
@@ -58,14 +65,21 @@
 #      timestamp and its own entitlements; never --deep. Then codesign --verify --deep --strict, and every part's
 #      Developer ID, team, runtime and timestamp. Before notarization spctl may refuse the app only for that.
 #   6. --publish: the app is zipped with ditto (zip breaks a framework's links), notarized (xcrun notarytool submit
-#      <zip> --keychain-profile <profile> --wait), stapled, and spctl must accept it. The DMG (the app and an
-#      Applications link) is made from the stapled app, signed, notarized, stapled and accepted. Without --publish
-#      the DMG holds the signed app and the run stops there.
+#      <zip> --keychain-profile <profile> --wait), stapled, and spctl must accept it. The DMG is made from the stapled
+#      app, signed, notarized, stapled and accepted. Without --publish the DMG holds the signed app and the run stops
+#      there. The DMG (P976, P977) holds the app, an Applications link and the background picture on an HFS+ volume:
+#      made read-write, mounted with -nobrowse (no Finder window, no AppleScript), laid out by scripts/dmg-layout.swift
+#      (its .DS_Store: the window, the picture, the two icons' places), unmounted and compressed (ULFO).
 #   7. Sparkle's sign_update signs the stapled DMG (stapling changes it, so never before) with the key in the owner's
 #      keychain, which this never reads. The appcast's one item has the version and build number read back from the
 #      app in the DMG, the minimum system, the notes and the signature; xmllint checks it.
-#   8. gh release create v<VERSION> on PUBLIC_REPO at HEAD with the DMG and appcast.xml (Sparkle's feed is
+#   8. gh release create v<VERSION> on PUBLIC_REPO at HEAD with the DMG, Juice.dmg (the same bytes under a name that
+#      never changes, so releases/latest/download/Juice.dmg always works, P981) and appcast.xml (Sparkle's feed is
 #      releases/latest/download/appcast.xml), marked latest, then read back.
+#   9. The Homebrew cask, Casks/juiceisland.rb (P978): the version, the DMG's SHA-256, auto_updates (Sparkle updates
+#      the app), a livecheck on the latest release and a zap of the app's own folders, read from the built app. It is
+#      written to output/release.noindex/<version>/Casks/ and into the tap's clone (which --publish needs), uncommitted:
+#      the run prints the commit and push for the owner. The export never carries it; the tap is its own repository.
 # Overrides, for tests: JI_RELEASE_BUILD_CMD (the build: given --public --universal and a folder, it prints the app's
 # path last), JI_RELEASE_TOOLS (a command every outward or keychain tool runs through, as "<command> <tool> <args>").
 set -euo pipefail
@@ -108,6 +122,15 @@ else
   eval "$(zsh "$root/scripts/public-settings.sh" --repo 2>/dev/null || print -r -- public_repo=)"
 fi
 profile=${cfg[JUICE_NOTARY_PROFILE]:-juice-notary}
+tap_dir=${JI_TAP_DIR:-${cfg[JUICE_TAP_DIR]:-${root:h}/homebrew-tap}}
+[[ $tap_dir == /* ]] || tap_dir=$root/$tap_dir
+tap_dir=${tap_dir:a}
+# A first line "# <headline>" in the notes names the release.
+headline=
+if [[ -n $notes_file ]]; then
+  first_line=$(head -1 "$notes_file")
+  [[ $first_line != '# '* ]] || headline=${${first_line#'# '}%%[[:space:]]#}
+fi
 sparkle_account=()
 [[ -z ${cfg[JUICE_SPARKLE_ACCOUNT]-} ]] || sparkle_account=(--account "${cfg[JUICE_SPARKLE_ACCOUNT]}")
 version=$(head -1 VERSION 2>/dev/null || true)
@@ -307,6 +330,27 @@ if [[ $mode != local ]]; then
   fi
   [[ -z "$(git status --porcelain)" ]] || need "This folder has changes that are not committed. A release is built only from a
    commit that $public_repo has: commit them in the private repository and export again."
+  # The tap (P978, P990): the README's first install line reads it, so no release goes out before its clone is here. The
+  # cask goes into it, so it must be the tap's and clean.
+  if [[ ! -d $tap_dir ]]; then
+    need "No clone of ${public_repo%%/*}/homebrew-tap at $tap_dir. The README's brew install --cask ${public_repo%%/*}/tap/juiceisland
+   reads that repository, so make it and clone it there before the first release:
+     gh repo create ${public_repo%%/*}/homebrew-tap --public --add-readme
+     git clone https://github.com/${public_repo%%/*}/homebrew-tap.git ${(q)tap_dir}
+   (JUICE_TAP_DIR in the signing file names another folder.)"
+  else
+    tap_origin=$(git -C "$tap_dir" remote get-url origin 2>/dev/null || true)
+    tap_origin=${${${tap_origin%/}%.git}#*github.com[:/]}
+    if ! git -C "$tap_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
+      need "$tap_dir is not a git clone of the Homebrew tap. Move it away, or clone the tap there:
+     git clone https://github.com/${public_repo%%/*}/homebrew-tap.git ${(q)tap_dir}"
+    elif [[ ${tap_origin:l} != ${${public_repo%%/*}:l}/homebrew-tap ]]; then
+      need "$tap_dir is a clone of ${tap_origin:-no GitHub repository}, not of ${public_repo%%/*}/homebrew-tap, the tap
+   brew install --cask ${public_repo%%/*}/tap/juiceisland reads. Set JUICE_TAP_DIR to the tap's clone."
+    elif [[ -n "$(git -C "$tap_dir" status --porcelain -- Casks 2>/dev/null)" ]]; then
+      need "The tap's clone ($tap_dir) has changes in Casks that are not committed. Commit or drop them first."
+    fi
+  fi
 fi
 
 if (( ${#missing} )); then
@@ -492,12 +536,62 @@ if [[ $mode != local ]]; then
 fi
 
 # --- The DMG -------------------------------------------------------------------------------------------------------
+# Styled (P976, P977): the app, an Applications link and the background on an HFS+ volume, laid out headless by
+# scripts/dmg-layout.swift while the read-write image is mounted with -nobrowse, then compressed.
 dmg=$out/${name// /-}-$version.dmg
-mkdir -p "$work/dmg"
-ditto "$app" "$work/dmg/${app:t}"
-ln -s /Applications "$work/dmg/Applications"
+stable=$out/${name// /-}.dmg
+stage=$work/dmg
+mkdir -p "$stage/.background"
+ditto "$app" "$stage/${app:t}"
+ln -s /Applications "$stage/Applications"
+art=$root/scripts/dmg
+[[ -s $art/background.png && -s $art/background@2x.png ]] \
+  || die "scripts/dmg has no background.png and background@2x.png: swift scripts/make-dmg-art.swift draws them"
+tiffutil -cathidpicheck "$art/background.png" "$art/background@2x.png" -out "$stage/.background/background.tiff" \
+  >>"$log" 2>&1 || die "tiffutil could not join the DMG background's two sizes"
+# The layout tool, built once per version of its source and of swiftc, beside the releases' folders.
+tools_dir=$root/output/release.noindex/tools
+layout_key=$( { cat "$root/scripts/dmg-layout.swift"; swiftc --version 2>&1 } | shasum -a 256 | cut -c1-16)
+layout_tool=$tools_dir/dmg-layout-$layout_key
+if [[ ! -x $layout_tool ]]; then
+  mkdir -p "$tools_dir"
+  swiftc -O -o "$layout_tool.new" "$root/scripts/dmg-layout.swift" >>"$log" 2>&1 \
+    || die "swiftc could not build scripts/dmg-layout.swift (its errors are in $log)"
+  mv "$layout_tool.new" "$layout_tool"
+fi
 say "making ${dmg:t}"
-hdiutil create -quiet -volname "$name" -srcfolder "$work/dmg" -fs HFS+ -format ULFO -ov "$dmg" || die "hdiutil could not make the DMG"
+rw=$work/rw.dmg
+hdiutil create -quiet -volname "$name" -srcfolder "$stage" -fs HFS+ -format UDRW -size $(( $(du -sm "$stage" | cut -f1) + 16 ))m \
+  -ov "$rw" || die "hdiutil could not make the DMG"
+mounted=
+unmount() {  # retried: Spotlight can hold a fresh volume for a moment
+  local i
+  [[ -n $mounted ]] || return 0
+  for i in 1 2 3 4 5; do
+    if hdiutil detach -quiet "$mounted" 2>>"$log"; then mounted=; return 0; fi
+    sleep 1
+  done
+  hdiutil detach -quiet -force "$mounted" 2>>"$log" && { mounted=; return 0 }
+  return 1
+}
+trap 'unmount || true' EXIT
+hdiutil attach -nobrowse -noautoopen -noverify -readwrite -plist "$rw" > "$work/attach.plist" 2>>"$log" \
+  || die "hdiutil could not mount the DMG to lay it out"
+for i in {0..9}; do
+  point=$(/usr/libexec/PlistBuddy -c "Print :system-entities:$i:mount-point" "$work/attach.plist" 2>/dev/null) || continue
+  mounted=$point; break
+done
+[[ -n $mounted ]] || die "hdiutil mounted the DMG, but did not say where"
+# A downloaded image mounts at /Volumes/<name>, and the background's alias says so (P983): another disk by that name
+# would take its place.
+[[ $mounted == "/Volumes/$name" ]] || die "another disk named $name is mounted, so the DMG went to $mounted. Eject it
+   (hdiutil detach \"/Volumes/$name\") and run this again."
+"$layout_tool" "$mounted" "${app:t}" .background/background.tiff >>"$log" 2>&1 \
+  || die "the DMG's layout failed: $(tail -1 "$log")"
+rm -rf "$mounted/.fseventsd" "$mounted/.Trashes"
+unmount || die "hdiutil could not unmount $mounted"
+hdiutil convert -quiet "$rw" -format ULFO -ov -o "$dmg" || die "hdiutil could not compress the DMG"
+rm -f "$rw"
 answer=$(run codesign --force --sign "$sha" --timestamp "$dmg" 2>&1) || die "codesign could not sign the DMG: $answer"
 answer=$(run codesign --verify --strict --verbose=2 "$dmg" 2>&1) || problem "codesign does not accept the signed DMG: $answer"
 if [[ $mode == local ]]; then
@@ -509,6 +603,8 @@ notarize "$dmg"
 staple "$dmg"
 verdict=$(assess "$dmg" --type open --context context:primary-signature)
 [[ $verdict == accepted ]] || problem "spctl does not accept the notarized DMG: ${verdict:-no reason given}"
+# The same bytes under a name that never changes (P981): releases/latest/download/Juice.dmg, the README's link.
+ditto "$dmg" "$stable"
 
 # --- Sparkle's signature and the appcast ---------------------------------------------------------------------------
 signed=$(run sign_update "${sparkle_account[@]}" "$dmg" 2>&1) || die "sign_update could not sign the DMG: $signed"
@@ -531,7 +627,9 @@ notes_md=$out/notes.md
   elif [[ $main_archs == *" arm64 "* ]]; then on_mac=" on a Mac with Apple silicon"; fi
   print -r -- "Needs macOS ${min_os%.0} or later$on_mac. Tested on macOS $host_os."
   print -r -- ""
-  if [[ -n $notes_file ]]; then
+  if [[ -n $headline ]]; then
+    tail -n +2 "$notes_file" | sed '/[^[:space:]]/,$!d'
+  elif [[ -n $notes_file ]]; then
     cat "$notes_file"
   elif [[ -z $prev_sha && $mode != dry ]]; then
     print -r -- "The first release."
@@ -585,13 +683,75 @@ EOF
 
 # --- The GitHub Release --------------------------------------------------------------------------------------------
 say "creating the release v$version on $public_repo"
-answer=$(run gh release create "v$version" "$dmg" "$appcast" --repo "$public_repo" --target "$head" \
-           --title "$name $version" --notes-file "$notes_md" --latest 2>&1) \
+answer=$(run gh release create "v$version" "$dmg" "$stable" "$appcast" --repo "$public_repo" --target "$head" \
+           --title "$name $version${headline:+: $headline}" --notes-file "$notes_md" --latest 2>&1) \
   || die "gh could not create the release: $answer (the DMG and the appcast are in $out)"
 assets=$(run gh release view "v$version" --repo "$public_repo" --json assets --jq '.assets[].name' 2>/dev/null) || assets=
-for a in "${dmg:t}" appcast.xml; do
+for a in "${dmg:t}" "${stable:t}" appcast.xml; do
   [[ $'\n'$assets$'\n' == *$'\n'$a$'\n'* ]] || die "the release v$version on $public_repo has no $a: look at it before anyone updates"
 done
+
+# --- The Homebrew cask (P978) ---------------------------------------------------------------------------------------
+# brew install --cask <owner>/tap/juiceisland reads Casks/juiceisland.rb in <owner>/homebrew-tap. Everything in it
+# comes from this release: the version, the DMG's SHA-256, and the folders the built app keeps, for zap.
+bundle_id=$(info CFBundleIdentifier "$shipped")
+app_group=$(ent com.apple.security.application-groups:0 "$app")
+zap=("~/Library/Application Support/$bundle_id" "~/Library/Caches/$bundle_id" "~/Library/HTTPStorages/$bundle_id"
+     "~/Library/Logs/$bundle_id" "~/Library/Preferences/$bundle_id.plist"
+     "~/Library/Saved Application State/$bundle_id.savedState")
+[[ -z $app_group ]] || zap+=("~/Library/Group Containers/$app_group")
+for w in "${appexes[@]}"; do
+  widget_id=$(info CFBundleIdentifier "$w/Contents/Info.plist")
+  [[ -z $widget_id ]] || zap+=("~/Library/Containers/$widget_id")
+done
+zap=(${(o)zap})
+cask=$out/Casks/juiceisland.rb
+mkdir -p "${cask:h}"
+{
+  print -r -- 'cask "juiceisland" do'
+  print -r -- "  version \"$version\""
+  print -r -- "  sha256 \"$(shasum -a 256 "$dmg" | cut -d' ' -f1)\""
+  print -r -- ''
+  print -r -- "  url \"https://github.com/$public_repo/releases/download/v#{version}/${name// /-}-#{version}.dmg\""
+  print -r -- "  name \"$name\""
+  print -r -- '  desc "Notch island for coding agents: approvals, sessions and usage limits"'
+  print -r -- "  homepage \"https://github.com/$public_repo\""
+  print -r -- ''
+  print -r -- '  livecheck do'
+  print -r -- '    url :url'
+  print -r -- '    strategy :github_latest'
+  print -r -- '  end'
+  print -r -- ''
+  print -r -- '  auto_updates true'
+  print -r -- "  depends_on macos: \">= :tahoe\""
+  print -r -- ''
+  print -r -- "  app \"${app:t}\""
+  print -r -- ''
+  print -r -- "  uninstall quit: \"$bundle_id\""
+  print -r -- ''
+  print -r -- '  zap trash: ['
+  for z in "${zap[@]}"; do print -r -- "    \"$z\","; done
+  print -r -- '  ]'
+  print -r -- ''
+  print -r -- '  caveats <<~EOS'
+  print -r -- "    Before you uninstall, click Remove from all agents in $name's Settings > Agents,"
+  print -r -- "    so no agent keeps calling $name's hook helper."
+  print -r -- '  EOS'
+  print -r -- 'end'
+} > "$cask"
+if (( $+commands[ruby] )); then
+  ruby -c "$cask" >/dev/null 2>>"$log" || die "the cask is not valid Ruby: $cask"
+fi
+if [[ $mode == dry ]]; then
+  say "dry run: the cask is $cask; a real release would put it in $tap_dir/Casks"
+elif [[ -d $tap_dir ]]; then
+  mkdir -p "$tap_dir/Casks"
+  cp "$cask" "$tap_dir/Casks/juiceisland.rb"
+  say "the cask for $version is in $tap_dir/Casks/juiceisland.rb. Publish it:"
+  print -r -- "  git -C ${(q)tap_dir} add Casks/juiceisland.rb && git -C ${(q)tap_dir} commit -m \"juiceisland $version\" && git -C ${(q)tap_dir} push"
+else
+  say "the tap's clone at $tap_dir is gone, so the cask is only in $cask: clone it there and copy the cask in"
+fi
 if [[ $mode == dry ]]; then
   say "dry run finished: nothing was signed, sent or uploaded; the calls it would make are in $JI_RELEASE_FAKE_LOG"
   if (( ${#stops} )); then

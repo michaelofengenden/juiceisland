@@ -253,6 +253,25 @@ public enum MoneyReadError: Error, Codable, Sendable, Equatable, Hashable {
         }
     }
 
+    /// What a money row says in place of its amount (Juice Island P1213): a word or two a glance takes in, where the
+    /// rails said only that something was wrong. The hover and Settings › Money say the rest.
+    public var rowWord: String {
+        switch self {
+        case .notConfigured: "Not connected"
+        case .keyFileRefused: "Key refused"
+        case .keyFileUnreadable: "No key"
+        case .keyNotUsable: "Wrong key"
+        case .notAvailableWithThisKey: "No access"
+        case .refusedByPolicy: "Refused"
+        case .rateLimited: "Rate limited"
+        case .http, .unreadableResponse: "Failed"
+        case .timeout: "Timed out"
+        case .offline: "Offline"
+        case .idMissing: "No ID"
+        case .idInvalid: "Bad ID"
+        }
+    }
+
     /// The hover label's reason, lower case.
     public var hoverReason: String {
         switch self {

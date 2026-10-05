@@ -1,7 +1,7 @@
 import IslandEngine
 import SwiftUI
 
-/// Settings › Setup › SSH hosts (P751): one row per host, then the add row: a field for `user@host` or a `Host` from
+/// Settings › Agents › SSH hosts (P751): one row per host, then the add row: a field for `user@host` or a `Host` from
 /// `~/.ssh/config` (its pop-up lists them), and Set up once something is typed. Nothing connects or installs without a
 /// click here.
 struct RemoteHostsSection: View {

@@ -6,6 +6,11 @@ import Foundation
 ///
 ///     pulling, building, verifying, ready, installing, restarting, done, failed:<reason>
 ///
+/// `waiting` (P895), between `pulling` and `building`, only from the fetch stage of this app's own copy of the script:
+/// a background prepare holds the update lock, and the run waits seconds for it to stop, or until the build it takes
+/// over runs. `checkout` follows it when the wait ends with no build taken over: the updater's checkout moves before
+/// the run builds. Older apps never run that stage, so they never meet either word.
+///
 /// The last complete line (ended by a newline) is the current state. `done` right after `pulling`: the running build
 /// is already origin/main's commit. `ready`: the staged app is built and verified; the app quits itself so the script can swap
 /// the bundle (`installing`, `restarting` and `done` follow while the app is gone; the script writes `done` once the
@@ -13,7 +18,7 @@ import Foundation
 /// the swap was undone and the previous app reopened; when it did not reopen, a second `failed:` line tells the owner
 /// to open it from its folder, and shows when they do.
 enum UpdateStatusLine: Equatable, Sendable {
-    case pulling, building, verifying, ready, installing, restarting, done
+    case pulling, waiting, checkout, building, verifying, ready, installing, restarting, done
     case failed(String)
 
     /// One line of the file.
@@ -26,6 +31,8 @@ enum UpdateStatusLine: Equatable, Sendable {
         }
         switch trimmed {
         case "pulling": self = .pulling
+        case "waiting": self = .waiting
+        case "checkout": self = .checkout
         case "building": self = .building
         case "verifying": self = .verifying
         case "ready": self = .ready
@@ -157,7 +164,10 @@ struct WhatsNewNote: Equatable, Sendable {
 /// What the app shows while an update runs, and once after one.
 enum UpdatePhase: Equatable, Sendable {
     case idle
-    case pulling, building, installing, restarting
+    /// `waiting`: the background prepare that holds the update lock stops, or the build the update takes over from it
+    /// has not started yet (P895). `settingUp`: the wait is over, and the updater's checkout moves before the build
+    /// (the status file's `checkout`).
+    case pulling, waiting, settingUp, building, installing, restarting
     /// Past ready, the app is still here after the controller's patience: the owner is asked to restart (P98).
     case restartNeeded
     /// The current app stays; About says why, with the log one click away.
@@ -167,17 +177,20 @@ enum UpdatePhase: Equatable, Sendable {
 
     var isRunning: Bool {
         switch self {
-        case .pulling, .building, .installing, .restarting, .restartNeeded: true
+        case .pulling, .waiting, .settingUp, .building, .installing, .restarting, .restartNeeded: true
         case .idle, .failed, .updated: false
         }
     }
 
-    /// "Fetching…" (the status file's `pulling`), "Building…", "Installing…", "Restarting…", "Restart to update",
-    /// "Update failed: <reason>", "Updated to <commit>"; nil while idle.
+    /// "Fetching…" (the status file's `pulling`), "Waiting for the background build…", "Setting up…", "Building…",
+    /// "Installing…", "Restarting…", "Restart to update", "Update failed: <reason>", "Updated to <commit>"; nil while
+    /// idle.
     var text: String? {
         switch self {
         case .idle: nil
         case .pulling: "Fetching…"
+        case .waiting: "\(UpdateText.waitingFull)…"
+        case .settingUp: "\(UpdateText.settingUp)…"
         case .building: "Building…"
         case .installing: "Installing…"
         case .restarting: "Restarting…"
@@ -269,14 +282,56 @@ enum UpdateText {
     /// About's line in a public build made without the feed's key (P824).
     static let updatesOff = "Updates are off in this build"
 
-    /// The Update control's words while a run goes (P803): "Fetching", "Building 63%" (the percent only while the
-    /// estimate holds it, P802), "Installing" (the new build's check, and Restart to update's), "Restarting" (the menu's,
-    /// past ready: the control says Updated); nil otherwise.
+    /// Settings › About › Install automatically's line (P1070, P1074): the private app restarts into a prepared build at
+    /// a quiet moment; the public flavor's feed downloads in the background and installs at quit, and once it has
+    /// downloaded a version (`installsOnQuit`) that one installs at quit even with the switch off, so the line names it.
+    static func installAutomatically(feed: Bool, installsOnQuit: String? = nil) -> String {
+        guard feed else { return "At a quiet moment: nothing waits on you, no typing for a minute." }
+        if let installsOnQuit { return "\(installsOnQuit) is downloaded and installs when you quit." }
+        return "Downloads in the background and installs when you quit."
+    }
+
+    /// Prepare updates in the background's line: installing waits for the click unless Install automatically is on.
+    static func prepare(installsAutomatically: Bool) -> String {
+        installsAutomatically ? "On power only." : "On power only. Installing waits for your click."
+    }
+
+    /// The What's new card's title (P716); "Updated automatically" on the build Install automatically opened (P1072).
+    static func whatsNewTitle(automatic: Bool) -> String { automatic ? "Updated automatically" : "What's new" }
+
+    /// The real step while a background prepare holds the update lock (P895), in full (menus, the tooltip, About's line)
+    /// and as the control says it: the full words do not fit its width (P808, P898).
+    static let waitingFull = "Waiting for the background build"
+    static let waitingShort = "Waiting for build"
+    /// Once that wait is over: the updater's checkout moves to the commit before the build (P895).
+    static let settingUp = "Setting up"
+    /// A build past its estimate (P897): it says so, rather than a bar that looks stuck; and why, when the Mac is busy.
+    static let stillBuilding = "Still building"
+    static let stillBuildingBusy = "Still building, the Mac is busy"
+    static let macIsBusy = "The Mac is busy"
+
+    /// The run's words in full (P803), for the gear menus' line, the tooltip and VoiceOver: "Fetching" (the git fetch
+    /// only), "Waiting for the background build", "Setting up" (the checkout moving once that wait is over), "Building
+    /// 63%" (the percent only while the estimate holds it, P802), past the estimate "Still building" ("Still building,
+    /// the Mac is busy" when it is), "Installing" (the new build's check, and Restart to update's), "Restarting" (the
+    /// menu's, past ready: the control says Updated); nil otherwise.
     static func runWords(_ phase: UpdatePhase, progress: UpdateProgress) -> String? {
+        if phase.isRunning, phase != .restartNeeded, let words = progress.words { return words }
+        if phase == .waiting { return waitingFull }
+        if phase == .building, progress.overran, progress.busy { return stillBuildingBusy }
+        return controlWords(phase, progress: progress)
+    }
+
+    /// The words inside the Update control, which fit its width (P808): the full ones but for "Waiting for build" and
+    /// "Still building".
+    static func controlWords(_ phase: UpdatePhase, progress: UpdateProgress) -> String? {
         if phase.isRunning, phase != .restartNeeded, let words = progress.words { return words }
         return switch phase {
         case .pulling: "Fetching"
-        case .building: progress.buildPercent.map { "Building \($0)%" } ?? "Building"
+        case .waiting: waitingShort
+        case .settingUp: settingUp
+        case .building:
+            if progress.overran { stillBuilding } else { progress.buildPercent.map { "Building \($0)%" } ?? "Building" }
         case .installing: "Installing"
         case .restarting: "Restarting"
         case .restartNeeded: restartToUpdate
@@ -284,13 +339,33 @@ enum UpdateText {
         }
     }
 
+    /// The control's words in full, for its tooltip and VoiceOver.
+    static func fullWords(_ words: String, progress: UpdateProgress) -> String {
+        switch words {
+        case waitingShort: waitingFull
+        case stillBuilding where progress.busy: stillBuildingBusy
+        default: words
+        }
+    }
+
     /// The time the estimate leaves the build, in plain words, only while it holds (P802): "About 3 min left", "About a
-    /// minute left", "Less than a minute left"; past it, "Taking longer than last time"; nil without an estimate.
+    /// minute left", "Less than a minute left"; past it, "The Mac is busy" when it is (P897), "Taking longer than last
+    /// time" otherwise; nil without an estimate.
     static func timeLeft(_ progress: UpdateProgress) -> String? {
-        if progress.overran { return "Taking longer than last time" }
+        if progress.overran { return progress.busy ? macIsBusy : "Taking longer than last time" }
         guard let seconds = progress.secondsLeft else { return nil }
         if seconds >= 90 { return "About \(Int((Double(seconds) / 60).rounded())) min left" }
         return seconds >= 45 ? "About a minute left" : "Less than a minute left"
+    }
+
+    /// About's line under the offered update while a run goes: the time the build has left (or why it takes longer),
+    /// and while it waits, the step in full (the control has room for "Waiting for build" only).
+    static func detail(_ phase: UpdatePhase, progress: UpdateProgress) -> String? {
+        switch phase {
+        case .waiting: waitingFull
+        case .building: timeLeft(progress)
+        default: nil
+        }
     }
 
     /// A failure's reason in plain words (P809): the updater's own reasons are plain already, a sentence's first

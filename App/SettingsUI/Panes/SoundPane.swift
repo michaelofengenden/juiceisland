@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 
 /// Settings › Sound (spec §4.5, C3), one group: Mute, Volume (every sound's, P426), the Needs you sound (a system
-/// sound), the Question sound (the Needs you sound until the owner picks another, P425) and the Done sound (None).
-/// Sounds are system sounds by name; a player is created only when one plays (P33): the engine's signals through
-/// `SignalSounds`, and here the Play buttons and the volume's preview when the slider is let go. Owner: stream A.
+/// sound), the Question sound (the Needs you sound until the owner picks another, P425) and the Done sound (None). Each
+/// sound's pop-up offers None, Juice's own three (`JuiceSound`, P1000), the macOS sounds and Choose File… (a copy kept in
+/// the app's folder, `SoundFiles`, P1001); a file it would not take says why under the row until the next choice. A
+/// player is created only when one plays (P33): the engine's signals through `SignalSounds`, and here the Play buttons
+/// and the volume's preview when the slider is let go. Owner: stream A.
 struct SoundPane: View {
     @Environment(AppEnvironment.self) private var env
 
@@ -21,35 +23,99 @@ struct SoundPane: View {
                         if !settings.soundsMuted { SoundChoices.play(SoundChoices.preview(settings), volume: SignalSounds.volume(settings)) }
                     }
                 }
-                SoundRow(title: "Needs you", choice: $settings.needsYouSound, options: SoundChoices.options,
-                         plays: settings.needsYouSound, settings: settings)
-                SoundRow(title: "Question", choice: $settings.questionSound, options: SoundChoices.questionOptions,
-                         plays: settings.questionSound ?? settings.needsYouSound, settings: settings)
-                SoundRow(title: "Done", choice: $settings.doneSound, options: SoundChoices.options,
-                         plays: settings.doneSound, settings: settings)
+                SoundRow(title: "Needs you", event: .needsYou,
+                         choice: Binding(get: { settings.needsYouSound }, set: { settings.needsYouSound = $0 ?? .none }),
+                         plays: settings.needsYouSound, settings: settings) { SignalSounds.needsYouChoice(settings) }
+                SoundRow(title: "Question", event: .question, sameAsNeedsYou: true, choice: $settings.questionSound,
+                         plays: settings.questionSound ?? settings.needsYouSound, settings: settings) { SignalSounds.questionChoice(settings) }
+                SoundRow(title: "Done", event: .done,
+                         choice: Binding(get: { settings.doneSound }, set: { settings.doneSound = $0 ?? .none }),
+                         plays: settings.doneSound, settings: settings) {
+                    SignalSounds.playable(settings.doneSound, fallback: .none, support: Product.supportFolder())
+                }
             }
         }
     }
 }
 
-/// One sound's row: its Play button and its pop-up. `plays`: what the choice sounds like (Question's "Same as Needs you"
-/// plays the Needs you sound).
-private struct SoundRow<Value: Hashable>: View {
+/// One sound's row: its Play button and its pop-up. `choice` is nil only for Question's "Same as Needs you". `plays`:
+/// the choice as stored, for whether there is anything to play; `resolve`: what plays when Play is clicked (a chosen
+/// file that is gone plays the event's default, P1001), read only then.
+private struct SoundRow: View {
     let title: String
-    @Binding var choice: Value
-    let options: [(Value, String)]
+    let event: SoundFiles.Event
+    var sameAsNeedsYou = false
+    @Binding var choice: SoundChoice?
     let plays: SoundChoice
     let settings: AppSettings
+    let resolve: @MainActor () -> SoundChoice
+    /// Why the last file picked was not taken; cleared by the next choice.
+    @State private var refusal: SoundFiles.Refusal?
+    /// A render's refusal to show (`previewSoundRefusals`); none in the app.
+    @Environment(\.previewSoundRefusals) private var previewRefusals
 
     var body: some View {
-        FormRow(title, dimmed: settings.soundsMuted) {
+        FormRow(title, subtitle: (refusal ?? previewRefusals[event])?.line, dimmed: settings.soundsMuted) {
             HStack(spacing: 8) {
                 // None has nothing to play, so the button goes rather than greys out.
                 if plays != .none {
-                    PlayButton(label: "Play the \(title) sound") { SoundChoices.play(plays, volume: SignalSounds.volume(settings)) }
+                    PlayButton(label: "Play the \(title) sound") { SoundChoices.play(resolve(), volume: SignalSounds.volume(settings)) }
                 }
-                SettingsPopup(selection: $choice, options: options, label: title + " sound")
+                SoundMenu(selection: Binding(get: { choice }, set: { choice = $0; refusal = nil }), sameAsNeedsYou: sameAsNeedsYou,
+                          label: title + " sound", choose: chooseFile)
             }
+        }
+    }
+
+    /// The open panel, on the click only; the file picked is copied in as this event's, or the row says why not.
+    private func chooseFile() {
+        SoundFilePanel.choose { url in
+            switch SoundFiles.adopt(url, for: event, support: Product.supportFolder()) {
+            case let .success(file):
+                choice = file
+                refusal = nil
+            case let .failure(why):
+                refusal = why
+            }
+        }
+    }
+}
+
+/// A sound's pop-up: the settings pop-up's face, and a menu of None (after "Same as Needs you" for Question), Juice's
+/// sounds, the macOS sounds, the file now chosen (when one is) and Choose File….
+struct SoundMenu: View {
+    @Binding var selection: SoundChoice?
+    var sameAsNeedsYou = false
+    var label: String
+    var choose: () -> Void = {}
+
+    var body: some View {
+        Menu {
+            ForEach(SoundChoices.lead(sameAsNeedsYou: sameAsNeedsYou), id: \.1) { value, title in item(value, title) }
+            Section("Juice") {
+                ForEach(SoundChoices.juiceOptions, id: \.1) { value, title in item(value, title) }
+            }
+            Section("macOS") {
+                ForEach(SoundChoices.systemOptions, id: \.1) { value, title in item(value, title) }
+            }
+            if case let .file(path)? = selection {
+                Section { item(selection, SoundFiles.title(path)) }
+            }
+            Divider()
+            Button(SoundChoices.chooseFile, action: choose)
+        } label: {
+            PopupFace(title: SoundChoices.title(selection, sameAsNeedsYou: sameAsNeedsYou))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(label)
+    }
+
+    private func item(_ value: SoundChoice?, _ title: String) -> some View {
+        Button { selection = value } label: {
+            if selection == value { Label(title, systemImage: "checkmark") } else { Text(title) }
         }
     }
 }
@@ -122,24 +188,55 @@ private struct PlayButton: View {
     }
 }
 
-/// The macOS system sounds the pop-ups offer, and None; Question's also "Same as Needs you" (nil), first.
+/// The sounds the pop-ups offer: None, Juice's own (P1000) and the macOS system sounds, flat (`options`) or as the
+/// menu's sections; Question's also "Same as Needs you" (nil), first.
 enum SoundChoices {
     static let names = ["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"]
-    static var options: [(SoundChoice, String)] { [(.none, "None")] + names.map { (.system($0), $0) } }
-    static var questionOptions: [(SoundChoice?, String)] { [(nil, "Same as Needs you")] + options.map { (Optional($0.0), $0.1) } }
+    static var juiceOptions: [(SoundChoice?, String)] { JuiceSound.allCases.map { (.juice($0), $0.title) } }
+    static var systemOptions: [(SoundChoice?, String)] { names.map { (.system($0), $0) } }
+    static var options: [(SoundChoice, String)] {
+        ([(SoundChoice.none, "None")] + juiceOptions + systemOptions).compactMap { value, title in value.map { ($0, title) } }
+    }
+    static var questionOptions: [(SoundChoice?, String)] { [(nil, sameAsNeedsYou)] + options.map { (Optional($0.0), $0.1) } }
 
-    @MainActor static func play(_ choice: SoundChoice, volume: Float) {
-        guard case let .system(name) = choice else { return }
-        SystemSoundPlayer.play(name, volume: volume)
+    static let sameAsNeedsYou = "Same as Needs you"
+    static let chooseFile = "Choose File…"
+
+    /// The menu's first items, before the sections.
+    static func lead(sameAsNeedsYou same: Bool) -> [(SoundChoice?, String)] {
+        (same ? [(nil, sameAsNeedsYou)] : []) + [(SoundChoice.none, "None")]
     }
 
-    /// What Volume's preview plays: the Needs you sound, else the Question sound, else the Done sound.
-    @MainActor static func preview(_ settings: AppSettings) -> SoundChoice {
-        [settings.needsYouSound, settings.questionSound ?? .none, settings.doneSound].first { $0 != .none } ?? .none
+    /// What the pop-up's face says for `choice`.
+    static func title(_ choice: SoundChoice?, sameAsNeedsYou same: Bool = false) -> String {
+        switch choice {
+        case nil: same ? sameAsNeedsYou : "None"
+        case .none?: "None"
+        case let .system(name)?: name
+        case let .juice(sound)?: sound.title
+        case let .file(path)?: SoundFiles.title(path)
+        }
+    }
+
+    @MainActor static func play(_ choice: SoundChoice, volume: Float) {
+        SystemSoundPlayer.play(choice, volume: volume)
+    }
+
+    /// What Volume's preview plays: the Needs you sound, else the Question sound, else the Done sound, each as it plays
+    /// now (a chosen file that is gone, its default).
+    @MainActor static func preview(_ settings: AppSettings, support: URL = Product.supportFolder()) -> SoundChoice {
+        let question = settings.questionSound == nil ? SoundChoice.none : SignalSounds.questionChoice(settings, support: support)
+        return [SignalSounds.needsYouChoice(settings, support: support), question,
+                SignalSounds.playable(settings.doneSound, fallback: .none, support: support)].first { $0 != .none } ?? .none
     }
 }
 
 /// The pop-up needs hashable values; `SoundChoice` is a shared enum, so the conformance is added here.
 extension SoundChoice: Hashable {
     nonisolated func hash(into hasher: inout Hasher) { hasher.combine(storageValue) }
+}
+
+extension EnvironmentValues {
+    /// Renders only: the line a row shows as if a file picked for its event had been refused.
+    @Entry var previewSoundRefusals: [SoundFiles.Event: SoundFiles.Refusal] = [:]
 }

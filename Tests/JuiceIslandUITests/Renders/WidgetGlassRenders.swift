@@ -40,6 +40,14 @@ struct WidgetGlassRenders {
     /// not a measurement.
     nonisolated static let widgetModel = GlassFaceModel(tone: GlassFaceModel.dark.tone.map { $0 * 0.865 }, chromaAtBlack: 1.4, chromaAtWhite: 1.4)
 
+    /// macOS's desktop widgets in full colour, as the owner's screenshot of 2026-10-03 shows them (Finder in front): just
+    /// outside the Batteries widget #8E8CC9 above and #AE97C6 below, just inside #9A88C8 and #A78CC4. The glass's dark face
+    /// a touch lighter (1.03 of its greys) and as saturated at black, more toward white (1.0 to 1.3), fitted to those two
+    /// pairs (ΔE 3.2 on average; the dark face itself 4.9). A model, not a measurement (P1205): the screenshot gives
+    /// samples over the lavender only, so over a pale or a night wallpaper it extrapolates the dark face and cannot
+    /// disagree with it there.
+    nonisolated static let fullColourModel = GlassFaceModel(tone: GlassFaceModel.dark.tone.map { $0 * 1.03 }, chromaAtBlack: 1.0, chromaAtWhite: 1.3)
+
     static let notch = IslandGlassRenders.notch
 
     /// The owner's island: Clean, the header strip, Pixel, a main turn waiting on its subagents leading the pill.

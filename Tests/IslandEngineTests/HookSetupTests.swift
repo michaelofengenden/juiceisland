@@ -136,16 +136,18 @@ struct HookSetupTests {
         #expect(choice(.installed) == ProfileHookChoice(action: .remove, refusal: nil))
         #expect(choice(.codexNeedsTrust(untrustedEvents: ["Stop"])) == ProfileHookChoice(action: .remove, refusal: nil))
 
-        // Open Island first, whatever else holds.
-        #expect(choice(.hasComments(file: "settings.json"), running: true).refusal == .openIslandRunning)
-        #expect(choice(.installed, running: true) == ProfileHookChoice(action: .remove, refusal: .openIslandRunning))
+        // Open Island running refuses nothing: Juice's hooks name its own helper (P900).
+        #expect(choice(.hasComments(file: "settings.json"), running: true).refusal == .hasComments(file: "settings.json"))
+        #expect(choice(.installed, running: true) == ProfileHookChoice(action: .remove, refusal: nil))
+        // Hooks that still call Open Island's helper offer Repair, which Agents calls Move (P903).
+        #expect(choice(.oldHelper(entries: 14)) == ProfileHookChoice(action: .repair, refusal: nil))
         #expect(choice(.folderMissing) == ProfileHookChoice(action: nil, refusal: .folderMissing))
         #expect(choice(.linkedConfig(file: "config.toml")) == ProfileHookChoice(action: nil, refusal: .linkedConfig(file: "config.toml")))
         #expect(choice(.hasComments(file: "hooks.json")).refusal == .hasComments(file: "hooks.json"))
         #expect(choice(.unreadable(file: "settings.json")).refusal == .unreadable(file: "settings.json"))
         #expect(choice(.blockedByOtherIsland(vibeEntries: 14), vibe: 14) == ProfileHookChoice(action: .install, refusal: .otherIslandHooks(count: 14)))
-        // Ours complete next to Vibe Island's: Remove would delete Vibe's too (P19).
-        #expect(choice(.installed, vibe: 14) == ProfileHookChoice(action: .remove, refusal: .otherIslandHooks(count: 14)))
+        // Ours complete next to Vibe Island's: Remove takes Juice's own entries only, so it goes ahead (P904).
+        #expect(choice(.installed, vibe: 14) == ProfileHookChoice(action: .remove, refusal: nil))
         // No helper in this build: Install and Repair wait, Remove does not need it.
         #expect(choice(.notInstalled, helper: false).refusal == .helperMissing)
         #expect(choice(.partial(installed: 3, expected: 4), helper: false).refusal == .helperMissing)
@@ -191,12 +193,7 @@ struct HookSetupTests {
                                   isDefaultFolder: false, accountID: nil, isMonitored: true)
             },
         ]
-        // Open Island running refuses first, whatever the profile holds.
-        let running: [(Sandbox) throws -> ProfileHookTarget] = [
-            { try $0.profile(.claude, ".claude-lab", files: ["settings.json": #"{"model":"opus"}"#]) },
-            { try $0.profile(.codex, ".codex-side", files: ["config.toml": "model = \"gpt-5\"\n"]) },
-        ]
-        for (make, openIslandRunning) in cases.map({ ($0, false) }) + running.map({ ($0, true) }) {
+        for (make, openIslandRunning) in cases.map({ ($0, false) }) {
             let box = try Sandbox()
             let target = try make(box)
             let manager = box.manager(openIslandRunning: openIslandRunning)
@@ -205,7 +202,11 @@ struct HookSetupTests {
             let choice = try #require(manager.choice(for: target.id))
             let refusal = try #require(choice.refusal)
             let before = try box.snapshot()
-            for click in [ProfileHookAction.install, .repair, .remove] {
+            // Vibe Island's hooks hold Install and Repair only: Remove takes Juice's own entries, none here, and writes
+            // nothing (P904).
+            if case .otherIslandHooks = refusal { try await manager.remove(target) }
+            let clicks: [ProfileHookAction] = if case .otherIslandHooks = refusal { [.install, .repair] } else { [.install, .repair, .remove] }
+            for click in clicks {
                 do {
                     switch click {
                     case .install: try await manager.install(target)

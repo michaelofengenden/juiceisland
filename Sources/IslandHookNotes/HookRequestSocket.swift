@@ -14,9 +14,10 @@ public enum HookRequestSocket {
         HookNoteSocket.defaultURL.deletingLastPathComponent().appendingPathComponent(fileName)
     }
 
-    public static func helperURL(environment: [String: String]) -> URL {
+    /// The override when set, else the helper's home's (P900), else the default.
+    public static func helperURL(environment: [String: String], home: HookHome? = nil) -> URL {
         if let path = environment[overrideKey], !path.isEmpty { return URL(fileURLWithPath: path) }
-        return defaultURL
+        return home?.requestsURL ?? defaultURL
     }
 }
 

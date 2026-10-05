@@ -28,7 +28,9 @@ import Observation
 /// updater's checkout, swapping nothing. Its `prepared:<commit>` turns the Update control into "Restart to update" while
 /// that commit is still origin/main's as last checked, and that click runs the updater as an install
 /// (`JI_RUN_MODE=install`), which verifies the prepared app the same way and goes on from ready as an update does. An
-/// Update while a prepare runs stops the prepare first; a quit stops it; a failed prepare leaves today's Update. Then
+/// Update while a prepare runs starts at once (P891): the updater moves the prepare out of the background band and
+/// takes its build over (or stops it within seconds when it builds an older commit), so the click never waits on the
+/// background band; a quit stops it; a failed prepare leaves today's Update. Then
 /// What's new (P716): the build an update opened shows what changed once, as a small card, and About keeps it.
 ///
 /// The public flavor (P823 to P826) runs no script: its feed (`feed`, Sparkle) downloads, unpacks and installs, and
@@ -82,6 +84,10 @@ final class UpdateController {
         /// The build whose What's new card showed already, and the setter that records one.
         var shownWhatsNew: @MainActor () -> String? = { nil }
         var markWhatsNewShown: @MainActor (String) -> Void = { _ in }
+        /// Install automatically (P1070 to P1073): the commit an automatic install went to, kept across the restart so
+        /// that build says so.
+        var automaticCommit: @MainActor () -> String? = { nil }
+        var markAutomatic: @MainActor (String?) -> Void = { _ in }
     }
 
     /// The updater in the app's bundle.
@@ -105,6 +111,8 @@ final class UpdateController {
     private(set) var whatsNew: WhatsNewNote?
     /// The What's new card shows: from the first launch of the build it names until the owner closes it.
     var showsWhatsNewCard = false
+    /// This build was installed by Install automatically (P1072): the What's new card says so.
+    private(set) var installedAutomatically = false
     /// About's What's new list is open.
     var showsWhatsNewList = false
 
@@ -124,6 +132,8 @@ final class UpdateController {
     @ObservationIgnored private let recheck: @MainActor () -> Void
     @ObservationIgnored private let quitSignal: @MainActor () -> String?
     @ObservationIgnored private let now: @MainActor () -> Date
+    /// The Mac is busy (`MachineLoad.isBusy`), which a build past its estimate says (P897).
+    @ObservationIgnored private let machineBusy: @MainActor () -> Bool
     @ObservationIgnored private let pollInterval: Duration
     @ObservationIgnored private let quitRetry: TimeInterval
     @ObservationIgnored private let quitPatience: TimeInterval
@@ -131,6 +141,10 @@ final class UpdateController {
     @ObservationIgnored private let finishHold: Duration
     /// The run's mode: an install's check is most of its way (`UpdateProgress`).
     @ObservationIgnored private var runMode: RunMode = .update
+    /// The run is Install automatically's (P1071): past ready it asks to quit only while no card waits on the owner.
+    @ObservationIgnored private(set) var runIsAutomatic = false
+    /// A session waits on the owner (a card): an automatic run holds its quit at ready (`AutoInstall.app` sets it).
+    @ObservationIgnored var quitWaits: @MainActor () -> Bool = { false }
     /// The script has written a state this run: until then an install does not know whether it fetches and builds.
     @ObservationIgnored private var begun = false
     /// When this app saw `building`, the fill then, and the build's estimate from the log (looked for once a run).
@@ -150,8 +164,6 @@ final class UpdateController {
     @ObservationIgnored private var prepareProcess: Process?
     /// The commit the running prepare builds.
     @ObservationIgnored private var preparingTip: String?
-    /// An Update clicked while a prepare ran: it starts once the prepare has stopped.
-    @ObservationIgnored private var updateAfterPrepare = false
     /// A commit whose prepare failed for a reason of its own (the build, the checks): not prepared again while the app
     /// runs, so a broken commit is not built every hour.
     @ObservationIgnored private var failedTip: String?
@@ -162,9 +174,10 @@ final class UpdateController {
     init(repoPath: String?, build: String? = nil, commit: String? = nil, paths: Paths = .standard,
          pid: Int32 = ProcessInfo.processInfo.processIdentifier, bundlePath: String = Bundle.main.bundlePath,
          phase: UpdatePhase = .idle, progress: UpdateProgress? = nil, prepared: String? = nil, preparing: Bool = false,
+         installedAutomatically: Bool = false,
          pollInterval: Duration = .milliseconds(500), quitRetry: TimeInterval = 5,
          quitPatience: TimeInterval = 12, updatedLife: Duration = .seconds(10 * 60), finishHold: Duration = .milliseconds(1400),
-         now: @escaping @MainActor () -> Date = { Date() },
+         now: @escaping @MainActor () -> Date = { Date() }, machineBusy: @escaping @MainActor () -> Bool = { MachineLoad.isBusy() },
          quitSignal: @escaping @MainActor () -> String? = { UpdateQuitSignal.installedName },
          quit: @escaping @MainActor () -> Void = {}, openFile: @escaping @MainActor (URL) -> Void = { _ in },
          recheck: @escaping @MainActor () -> Void = {}, context: Context = Context()) {
@@ -179,12 +192,14 @@ final class UpdateController {
         self.progress = progress ?? UpdateProgress.of(phase: phase, install: false, buildStarted: nil, estimate: nil, now: Date())
         self.prepared = prepared
         self.preparing = preparing
+        self.installedAutomatically = installedAutomatically
         self.pollInterval = pollInterval
         self.quitRetry = quitRetry
         self.quitPatience = quitPatience
         self.updatedLife = updatedLife
         self.finishHold = finishHold
         self.now = now
+        self.machineBusy = machineBusy
         self.quitSignal = quitSignal
         self.quit = quit
         self.openFile = openFile
@@ -192,28 +207,29 @@ final class UpdateController {
     }
 
     /// Starts the update unless one runs. The old status file goes first, so a stale `ready` can never quit the app. A
-    /// prepare that runs holds the updater's checkout and its lock: it is stopped first, and the update starts as it
-    /// ends (Fetching… shows meanwhile).
+    /// prepare that runs holds the updater's checkout and its lock: the update starts at once all the same, and the
+    /// updater takes the prepare over, out of the background band, or stops it within seconds (P891). The app never
+    /// stops it itself: a TERM to a run in the background band on a busy Mac waited minutes for its cleanup.
     func start() {
         guard !phase.isRunning else { return }
         if let feed { return feed.retry() }
-        if let prepareProcess {
-            updateAfterPrepare = true
-            phase = .pulling
-            refreshProgress()
-            JuiceLog.update.notice("update asked while a prepare runs: the prepare stops first")
-            prepareProcess.terminate()
-            return
+        if prepareProcess != nil {
+            JuiceLog.update.notice("update asked while a prepare runs: the updater takes it over")
         }
         launch(.update)
     }
 
-    /// Restart to update (P711): installs the prepared app; with nothing prepared, an update.
-    func installPrepared() {
+    /// Restart to update (P711): installs the prepared app; with nothing prepared, an update. `automatic`: Install
+    /// automatically's run (`AutoInstall`, P1070), only ever for a prepared app: it keeps its commit so the build it opens
+    /// says so, and past ready waits to quit while a card waits on the owner.
+    func installPrepared(automatic: Bool = false) {
         guard !phase.isRunning else { return }
         if let feed { return feed.install() }
-        guard prepareProcess == nil, prepared != nil else { return start() }
+        guard prepareProcess == nil, let commit = prepared else { return automatic ? () : start() }
+        if automatic { context.markAutomatic(commit) }
         launch(.install)
+        runIsAutomatic = automatic && phase.isRunning
+        if automatic, !phase.isRunning { context.markAutomatic(nil) }
     }
 
     /// Runs the bundle's updater as an update or an install, and follows its status file.
@@ -256,6 +272,7 @@ final class UpdateController {
         readyAt = nil
         quitAsks = 0
         runMode = mode
+        runIsAutomatic = false
         begun = false
         buildStartedAt = nil
         buildFrom = UpdateProgress.fetchEnd
@@ -263,9 +280,9 @@ final class UpdateController {
         estimateLooked = false
         updatedExpiry?.cancel()
         // The run takes the prepared app, or leaves it of no use: it is not offered again (a dev build's beside the release
-        // one stays theirs).
+        // one stays theirs). A prepare that still runs keeps its file: the updater follows it there.
         prepared = nil
-        if prepareFileIsThisBundles() { try? files.removeItem(at: paths.prepareStatusFile) }
+        if prepareProcess == nil, prepareFileIsThisBundles() { try? files.removeItem(at: paths.prepareStatusFile) }
         phase = mode == .install ? .installing : .pulling
         refreshProgress()
         JuiceLog.update.notice("update started (\(mode.rawValue, privacy: .public))")
@@ -319,18 +336,20 @@ final class UpdateController {
     }
 
     /// The setting changed: on, a prepare may start now (a commit that failed before is tried again); off, a running
-    /// one stops.
+    /// one stops, unless an update runs, which has taken it over or stops it itself.
     func prepareSettingChanged() {
         if context.prepareEnabled() {
             failedTip = nil
             considerPreparing()
-        } else {
+        } else if !phase.isRunning {
             prepareProcess?.terminate()
         }
     }
 
-    /// On quit: a running prepare stops with its build (the script ends it and keeps nothing half made).
+    /// On quit: a running prepare stops with its build (the script ends it and keeps nothing half made), unless an
+    /// update runs: its build is the update's now, and an update goes on when the app quits.
     func stopForQuit() {
+        guard !phase.isRunning else { return }
         prepareProcess?.terminate()
     }
 
@@ -365,6 +384,13 @@ final class UpdateController {
     private func prepareEnded() {
         prepareProcess = nil
         preparing = false
+        // An update runs: it took this prepare over (and installs what it left) or stopped it. Nothing to offer, and
+        // nothing to prepare while it runs.
+        if phase.isRunning {
+            preparingTip = nil
+            JuiceLog.update.notice("the prepare ended while an update runs")
+            return
+        }
         // A prepare that found the update lock taken wrote nothing: what the file holds then is another bundle's run.
         let outcome = prepareFileIsThisBundles() ? readPrepare() : nil
         switch outcome {
@@ -380,10 +406,7 @@ final class UpdateController {
         }
         let started = preparingTip
         preparingTip = nil
-        if updateAfterPrepare {
-            updateAfterPrepare = false
-            launch(.update)
-        } else if case let .prepared(built)? = outcome {
+        if case let .prepared(built)? = outcome {
             // The commit it was started for: a check meanwhile may have seen a newer one, which is prepared next. Another
             // commit: origin/main moved before the prepare's own fetch, so the check is stale (Restart to update needs
             // its commit); it checks again rather than preparing again, which would only fetch the same commit.
@@ -442,6 +465,12 @@ final class UpdateController {
     /// The note the update that opened this build left: kept for About, and its card shown on this build's first
     /// launch only.
     private func restoreWhatsNew() {
+        // An automatic install's commit (P1072): this build is it, or the install did not happen; either way it is read
+        // once.
+        if let automatic = context.automaticCommit() {
+            context.markAutomatic(nil)
+            installedAutomatically = automatic == commit
+        }
         guard let data = FileManager.default.contents(atPath: paths.whatsNewFile.path),
               let note = WhatsNewNote(text: String(decoding: data, as: UTF8.self)), note.belongs(to: commit) else { return }
         whatsNew = note
@@ -463,13 +492,21 @@ final class UpdateController {
         case let .failed(reason)?: return fail(reason)
         case .done?: if readyAt == nil { return finishUpToDate() }
         case .pulling?: if readyAt == nil { phase = .pulling }
+        case .waiting?: if readyAt == nil { phase = .waiting }
+        case .checkout?: if readyAt == nil { phase = .settingUp }
         case .building?: if readyAt == nil { phase = .building }
         // Verifying is the last step before the swap; it shows as Installing….
         case .verifying?: if readyAt == nil { phase = .installing }
         case nil: break
         }
         if let readyAt {
-            followQuit(since: readyAt)
+            // Install automatically never quits mid-approval (P1071): ready waits while a card waits on the owner, and
+            // the asks count from the moment none does. The script's own patience past ready still bounds it.
+            if runIsAutomatic, quitWaits() {
+                self.readyAt = now()
+            } else {
+                followQuit(since: readyAt)
+            }
         } else if let startedAt, now().timeIntervalSince(startedAt) > Self.timeout {
             fail("Timed out after \(Int(Self.timeout / 60)) minutes")
         }
@@ -487,8 +524,10 @@ final class UpdateController {
             }
             if !estimateLooked { lookForEstimate() }
         }
-        let next = UpdateProgress.of(phase: phase, install: runMode == .install, begun: begun, buildStarted: buildStartedAt,
+        var next = UpdateProgress.of(phase: phase, install: runMode == .install, begun: begun, buildStarted: buildStartedAt,
                                      buildFrom: buildFrom, estimate: estimate, now: now())
+        // Past the estimate only: whether the Mac is busy says why it takes longer (P897).
+        if next.overran, machineBusy() { next.busy = true }
         if next != progress { progress = next }
     }
 
@@ -534,6 +573,8 @@ final class UpdateController {
     /// ready (this app's own asks may not have gone through); any other signal does nothing.
     func scriptAskedToQuit() {
         guard process?.isRunning == true, readStatus() == .ready else { return }
+        // Install automatically holds its quit while a card waits on the owner (P1071), the script's ask too.
+        guard !(runIsAutomatic && quitWaits()) else { return startPolling() }
         if readyAt == nil { sawReady(hold: false) } else { askToQuit() }
         startPolling()
     }
@@ -605,11 +646,13 @@ final class UpdateController {
         refreshProgress()
         JuiceLog.update.notice("update ready: the app quits for it")
         finishing?.cancel()
+        if runIsAutomatic, quitWaits() { return }
         guard hold, finishHold > .zero else { return askToQuit() }
         let wait = finishHold
         finishing = Task { [weak self] in
             try? await Task.sleep(for: wait)
-            guard !Task.isCancelled, let self, self.readyAt == ready, self.phase.isRunning, self.quitAsks == 0 else { return }
+            guard !Task.isCancelled, let self, self.readyAt == ready, self.phase.isRunning, self.quitAsks == 0,
+                  !(self.runIsAutomatic && self.quitWaits()) else { return }
             self.askToQuit()
         }
     }
@@ -661,6 +704,8 @@ final class UpdateController {
         polling?.cancel()
         finishing?.cancel()
         readyAt = nil
+        if runIsAutomatic { context.markAutomatic(nil) }
+        runIsAutomatic = false
         JuiceLog.update.error("the update failed (see update.log)")
         phase = .failed(reason: reason)
         refreshProgress()

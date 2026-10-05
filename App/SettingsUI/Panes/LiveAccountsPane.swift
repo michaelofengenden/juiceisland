@@ -60,6 +60,8 @@ struct LiveAccountsPane: View {
                 }
             }
             FormSection {
+                // A Claude or Codex config folder at any path, by its path (P1055).
+                AddFolderRow(model: model)
                 FormRow("Sign-in browser") {
                     SettingsPopup(selection: Binding(get: { model.browserProfile ?? "" }, set: { model.browserProfile = $0.isEmpty ? nil : $0 }),
                                   options: [("", "Default browser")] + chromeProfiles.map { ($0.directory, $0.name) },
@@ -74,9 +76,54 @@ struct LiveAccountsPane: View {
     }
 }
 
+/// Add Folder…: a Claude or Codex config folder anywhere (a fork's, a second account outside the home folder), picked in
+/// the system's folder panel and kept by its path (`LiveUsageModel.addFolder`, P1055). Why a folder was not taken shows
+/// in the row, in a few words, until the next pick.
+struct AddFolderRow: View {
+    let model: LiveUsageModel
+    @State private var problem: LiveUsageModel.AddFolderProblem?
+
+    var body: some View {
+        FormRow("Folder at another path", subtitle: problem.map(LiveAccountsText.addFolder)) {
+            PushButton(title: "Add Folder…", small: true) { choose() }
+                .disabled(!model.canEdit)
+                .help(model.canEdit ? "A Claude or Codex config folder, anywhere" : LiveUsageModel.juiceRunningText)
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = URL(fileURLWithPath: model.home, isDirectory: true)
+        panel.prompt = "Add"
+        panel.message = "Choose a Claude or Codex config folder."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated {
+                if case let .failure(why) = model.addFolder(at: url.path) { problem = why } else { problem = nil }
+            }
+        }
+    }
+}
+
 /// The pane's few words (unit-tested).
 @MainActor
 enum LiveAccountsText {
+    /// Why Add Folder… did not take a folder.
+    static func addFolder(_ problem: LiveUsageModel.AddFolderProblem) -> String {
+        switch problem {
+        case .cannotEdit: LiveUsageModel.juiceRunningText
+        case .notAProfile: "No Claude or Codex files there"
+        case .both: "Holds both Claude and Codex files"
+        case .listed: "Already in the list"
+        case .home: "That is your home folder, not a config folder"
+        case .aboveHome: "That holds your home folder, not a config folder"
+        }
+    }
+
     /// One line above the list, only when there is something to say.
     static func statusLine(_ model: LiveUsageModel) -> String? {
         if let reason = model.refreshUnavailableReason { return reason }

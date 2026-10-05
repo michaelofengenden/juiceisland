@@ -375,7 +375,8 @@ struct CodexAttentionTableTests {
     // MARK: Other agents
 
     /// OC1, OT1, OT3: OpenCode's plugin, Cursor's blocking hook and a Claude fork's PermissionRequest stay on
-    /// upstream's path: shown at once, answerable through the bridge.
+    /// upstream's path: shown at once, answerable through the bridge. Cursor's is shown read-only: the table marks it
+    /// Watch, so its own prompt decides and a Yes sends nothing (P930, P1159).
     @Test
     func oc1ot1ot3OtherAgentsKeepTheBridgesAnswerPath() async {
         for (tool, source) in [(AgentTool.openCode, "opencode"), (.cursor, "cursor"), (.qwenCode, "qwen")] {
@@ -383,13 +384,16 @@ struct CodexAttentionTableTests {
             s.begin("o1", tool: tool)
             #expect(s.hook(S.claude("PermissionRequest", session: "o1", tool: "Bash", input: S.push), source: source) == nil)
             s.bridge(F.permission("o1", toolUseID: nil, at: s.clock.current))
-            #expect(s.glyph("o1") == "!" && s.head("o1")?.channel == .answer(.bridge), "\(tool)")
-            #expect(await s.engine.approve(sessionID: "o1", decision: .allowOnce) == .sent)
-            #expect(s.sent.current == [.resolvePermission(sessionID: "o1", resolution: .allowOnce())], "\(tool)")
+            let watched = tool == .cursor
+            #expect(s.glyph("o1") == "!" && s.head("o1")?.channel == (watched ? .open : .answer(.bridge)), "\(tool)")
+            #expect(await s.engine.approve(sessionID: "o1", decision: .allowOnce) == (watched ? .nothingToSend : .sent))
+            #expect(s.sent.current == (watched ? [] : [.resolvePermission(sessionID: "o1", resolution: .allowOnce())]), "\(tool)")
         }
     }
 
-    /// OC2: a restored OpenCode wait draws nothing; OT2: Gemini's Notification gives no "!".
+    /// OC2: a restored OpenCode wait draws nothing; OT2: Gemini's Notification gives no request it could answer. Since
+    /// wave 4 (P1103) its ToolPermission, sent just before Gemini's own prompt shows, is a notice: "!" with nothing to
+    /// answer. Its other types, and a Claude type it never sends, open nothing.
     @Test
     func oc2ot2NoWaitWithoutARequest() {
         let s = S()
@@ -399,11 +403,15 @@ struct CodexAttentionTableTests {
         s.engine.settleRestoredWaits()
         #expect(s.glyph("oc") == nil && s.engine.needsYouCount == 0)
         s.begin("g1", tool: .geminiCLI)
+        s.hook(S.notification("permission_prompt", session: "g1"), source: "gemini")
+        s.hook(["hook_event_name": "Notification", "session_id": "g1", "cwd": "/tmp/project", "notification_type": "Other",
+                "message": "Gemini says hello"], source: "gemini")
+        #expect(s.glyph("g1") == nil && s.engine.openRequests.isEmpty)
         s.hook(["hook_event_name": "Notification", "session_id": "g1", "cwd": "/tmp/project", "notification_type": "ToolPermission",
                 "message": "Gemini needs permission"], source: "gemini")
-        s.hook(S.notification("permission_prompt", session: "g1"), source: "gemini")
         s.bridge(.activityUpdated(SessionActivityUpdated(sessionID: "g1", summary: "Gemini needs permission", phase: .running,
                                                          timestamp: s.clock.current)))
-        #expect(s.glyph("g1") == nil && s.engine.openRequests.isEmpty)
+        #expect(s.glyph("g1") == "!" && s.engine.openRequests.count == 1)
+        #expect(s.head("g1")?.content == .notice && s.head("g1")?.isAnswerable == false)
     }
 }

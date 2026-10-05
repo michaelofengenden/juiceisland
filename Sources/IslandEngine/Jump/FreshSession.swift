@@ -143,6 +143,44 @@ public struct FreshSessionLaunch: Equatable, Sendable {
     }
 }
 
+extension FreshSessionLaunch {
+    /// The first run's Start (P960): a new window in the owner's usual terminal, in `folder` (the latest session's) while
+    /// it is still a folder, else in the home folder, running the agent's own command as the owner would type it (no
+    /// account variable, no skip switch: it is the owner's session, which the island should see). Opened only by that
+    /// click.
+    public static func firstSession(command: String, host: Host, folder: String? = nil, home: String = NSHomeDirectory(),
+                                    isFolder: (String) -> Bool = FreshSessionLaunch.isFolder) -> FreshSessionLaunch {
+        let start = folder.flatMap { !$0.isEmpty && isFolder($0) ? $0 : nil } ?? home
+        return FreshSessionLaunch(host: host, folder: start, line: command)
+    }
+
+    /// A folder there now (a link to one counts).
+    public static func isFolder(_ path: String) -> Bool {
+        var folder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &folder) && folder.boolValue
+    }
+
+    /// The terminal the owner most likely uses: one running now (Ghostty, then iTerm, then Terminal), else an installed
+    /// Ghostty or iTerm, else Terminal. Asks only whether each app runs or is installed.
+    public static func usualHost(isRunning: (String) -> Bool, isInstalled: (String) -> Bool) -> Host {
+        let order: [Host] = [.ghostty, .iterm, .terminal]
+        if let running = order.first(where: { isRunning($0.bundleID) }) { return running }
+        return order.first { $0 != .terminal && isInstalled($0.bundleID) } ?? .terminal
+    }
+
+    /// This Mac's usual terminal (`usualHost`).
+    public static func liveUsualHost() -> Host {
+        let runner = JumpRunner()
+        return usualHost(isRunning: runner.isAppRunning, isInstalled: { runner.appURL($0) != nil })
+    }
+
+    /// Opens `launch` on the owner's click, off the main thread (the first use waits on macOS's Automation prompt). Only
+    /// the app calls it; tests and renders inject their own opener.
+    public static func openLive(_ launch: FreshSessionLaunch) async -> Bool {
+        await Task.detached(priority: .userInitiated) { live(launch) }.value
+    }
+}
+
 extension SessionEngine {
     /// What "Open in <account>" would open for the session (P703): its own terminal app when it is Terminal, iTerm or
     /// Ghostty (a tmux pane's host included), else Terminal; nil when its folder is not known.

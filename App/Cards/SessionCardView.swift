@@ -113,9 +113,9 @@ struct SessionCardView: View {
     }
 
     /// The system-wide key's hint shows on the row it jumps to: only while it is on, registered (a key the system would
-    /// not give us is no hint) and set to jump, not to open the island (P323).
+    /// not give us is no hint) and set to jump, not to open the island (P323), and Keyboard shortcuts are on (P1030).
     static func showsJumpHint(_ settings: AppSettings, problem: String?) -> Bool {
-        settings.globalJumpEnabled && problem == nil && settings.globalKeyAction == .jump
+        settings.shortcutsEnabled && settings.globalJumpEnabled && problem == nil && settings.globalKeyAction == .jump
     }
 }
 

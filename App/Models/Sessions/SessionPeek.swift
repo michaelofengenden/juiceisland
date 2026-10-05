@@ -70,6 +70,18 @@ struct SessionPeek: Equatable, Sendable {
         return rest.isEmpty ? nil : "…" + rest
     }
 
+    /// The peek a Clean row with Show model or Show branch on leaves (P1015): what the row's line says itself goes (every
+    /// fact once); nil when nothing is left.
+    func leaving(model: Bool, branch: Bool) -> SessionPeek? {
+        var peek = self
+        if model {
+            peek.facts.model = nil
+            peek.facts.effort = nil
+        }
+        if branch { peek.branch = nil }
+        return peek.isEmpty ? nil : peek
+    }
+
     /// Nothing but its reply: with the reply shown whole on the row's line, there is nothing left to peek at.
     var saysOnlyItsReply: Bool {
         prompt == nil && tool == nil && recap == nil && facts.isEmpty && branch == nil && thinking == nil && steps.isEmpty

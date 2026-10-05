@@ -1,3 +1,4 @@
+import IslandHookNotes
 import JuiceCore
 import OpenIslandCore
 import SwiftUI
@@ -292,7 +293,9 @@ struct WidgetRowView: View {
         switch key {
         case "claude": return .claude
         case "codex": return .codex
-        default: return AgentTool(rawValue: key).map { GlyphPalette.Agent.other($0) }
+        default:
+            if key.hasPrefix("kind:") { return AgentKind(rawValue: String(key.dropFirst(5))).map { GlyphPalette.Agent.kind($0) } }
+            return AgentTool(rawValue: key).map { GlyphPalette.Agent.other($0) }
         }
     }
 }

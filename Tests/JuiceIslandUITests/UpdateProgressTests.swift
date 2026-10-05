@@ -135,6 +135,75 @@ struct UpdateProgressTests {
         #expect(UpdateText.timeLeft(.none) == nil && UpdateText.timeLeft(UpdateProgress(fraction: UpdateProgress.fetchEnd)) == nil)
     }
 
+    /// Past its estimate a build says so (P897): "Still building" in the control; why, when the Mac is busy ("Still
+    /// building, the Mac is busy" in the menus and the tooltip, "The Mac is busy" under it in About), and "Taking longer
+    /// than last time" when it is not. Inside the estimate the percent, and with none just "Building", as before.
+    @Test func aBuildPastItsEstimateSaysItIsStillBuildingAndWhy() {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        func building(after seconds: TimeInterval, busy: Bool, estimate: Int? = 100) -> UpdateProgress {
+            UpdateProgress.of(phase: .building, install: false, buildStarted: start, estimate: estimate.map(BuildEstimate.init), busy: busy,
+                              now: start.addingTimeInterval(seconds))
+        }
+        let busy = building(after: 150, busy: true), calm = building(after: 150, busy: false)
+        #expect(busy.overran && busy.busy && busy.fraction == UpdateProgress.buildEnd && !calm.busy)
+        #expect(UpdateText.controlWords(.building, progress: busy) == "Still building")
+        #expect(UpdateText.controlWords(.building, progress: calm) == "Still building")
+        #expect(UpdateText.runWords(.building, progress: busy) == "Still building, the Mac is busy")
+        #expect(UpdateText.runWords(.building, progress: calm) == "Still building")
+        #expect(UpdateText.detail(.building, progress: busy) == "The Mac is busy")
+        #expect(UpdateText.detail(.building, progress: calm) == "Taking longer than last time")
+        #expect(UpdateText.menuTitle(available: nil, phase: .building, progress: busy) == "Updating: Still building, the Mac is busy")
+        // Inside the estimate, a busy Mac changes nothing: the percent and the time left.
+        let inside = building(after: 50, busy: true)
+        #expect(!inside.busy && UpdateText.controlWords(.building, progress: inside) == "Building 50%")
+        #expect(UpdateText.detail(.building, progress: inside) == "About a minute left")
+        #expect(UpdateText.controlWords(.building, progress: building(after: 500, busy: true, estimate: nil)) == "Building")
+    }
+
+    /// Waiting for a background prepare (P895): the run's own step, never "Fetching", with the fill held where the build
+    /// starts; once the wait is over the checkout moves ("Setting up", the fill where it was), and the build then sweeps
+    /// on from there, and past its estimate on a busy Mac says so.
+    @Test func aRunThatWaitsForTheBackgroundBuildSaysSo() async throws {
+        let box = try Sandbox(script: "status_to pulling; step; status_to waiting; step; status_to checkout; step; "
+                              + "print -r -- '12:00:02 estimate: the last incremental build here took 100 s'; status_to building; step; "
+                              + "status_to verifying; step; status_to ready; step")
+        defer { box.remove() }
+        let clock = TestClock()
+        let controller = box.controller(clock: clock, finishHold: .seconds(3_600), busy: true) {}
+        controller.start()
+        var fills = [controller.progress.fraction]
+        #expect(await wait { box.log.contains("stub started") })
+        #expect(UpdateText.controlWords(controller.phase, progress: controller.progress) == "Fetching")
+        box.go()
+        #expect(await wait { controller.phase == .waiting })
+        fills.append(controller.progress.fraction)
+        #expect(controller.progress.fraction == UpdateProgress.fetchEnd)
+        #expect(UpdateText.controlWords(controller.phase, progress: controller.progress) == "Waiting for build")
+        #expect(UpdateText.menuTitle(available: nil, phase: controller.phase, progress: controller.progress)
+            == "Updating: Waiting for the background build")
+        #expect(UpdateText.detail(controller.phase, progress: controller.progress) == "Waiting for the background build")
+        box.go()
+        #expect(await wait { controller.phase == .settingUp })
+        fills.append(controller.progress.fraction)
+        #expect(UpdateText.controlWords(controller.phase, progress: controller.progress) == "Setting up")
+        #expect(UpdateText.menuTitle(available: nil, phase: controller.phase, progress: controller.progress) == "Updating: Setting up")
+        #expect(UpdateText.detail(controller.phase, progress: controller.progress) == nil)
+        box.go()
+        #expect(await wait { controller.progress.buildPercent == 0 })
+        fills.append(controller.progress.fraction)
+        clock.now += 150
+        #expect(await wait { controller.progress.overran })
+        #expect(controller.progress.busy && UpdateText.runWords(controller.phase, progress: controller.progress) == "Still building, the Mac is busy")
+        fills.append(controller.progress.fraction)
+        box.go()
+        #expect(await wait { controller.phase == .installing })
+        fills.append(controller.progress.fraction)
+        #expect(fills == fills.sorted(), "the fill went back: \(fills)")
+        box.go()
+        #expect(await wait { controller.phase == .restarting })
+        box.go()
+    }
+
     // MARK: A run, followed
 
     /// A stub updater in a scratch bundle: the status as update-app.sh appends it, its output into the log (the app
@@ -158,11 +227,11 @@ struct UpdateProgressTests {
             try body.write(to: self.script, atomically: true, encoding: .utf8)
         }
 
-        @MainActor func controller(clock: TestClock, finishHold: Duration, prepared: String? = nil,
+        @MainActor func controller(clock: TestClock, finishHold: Duration, prepared: String? = nil, busy: Bool = false,
                                    quit: @escaping @MainActor () -> Void) -> UpdateController {
             UpdateController(repoPath: root.appendingPathComponent("repo").path, paths: paths, pid: 4242, bundlePath: bundle.path,
                              prepared: prepared, pollInterval: .milliseconds(30), quitRetry: 5, quitPatience: 12, finishHold: finishHold,
-                             now: { clock.now }, quitSignal: { nil }, quit: quit)
+                             now: { clock.now }, machineBusy: { busy }, quitSignal: { nil }, quit: quit)
         }
 
         /// The status file's current state.

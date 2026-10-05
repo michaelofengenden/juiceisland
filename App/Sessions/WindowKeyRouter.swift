@@ -9,7 +9,9 @@ import IslandEngine
 /// this from `keyDown` before anything else; a handled key never reaches the app menu. Characters, not key codes, and
 /// nothing while an input method has marked text (P40). A held card key's repeats are eaten and answer nothing: once
 /// the first approval is answered the next is first, and a repeat would answer it unseen (P138). No event monitor
-/// anywhere. Owner: stream C.
+/// anywhere. The card keys are Settings › Shortcuts' (`CardKeys`, P1025 to P1030), as the island's; Allow all and Deny all
+/// answer every approval `BatchAnswer` covers while two or more wait (P1031), and in Switch sessions the system-wide key
+/// with ⇧ moves the ring back (P1033). Owner: stream C.
 @MainActor
 enum WindowKeyRouter {
     /// A key press reduced to what the router matches: the character without modifiers (Shift kept, as AppKit's
@@ -51,33 +53,49 @@ enum WindowKeyRouter {
         case move(Int)
         /// Return: jump to the keys' row, as a click on it does.
         case open
+        /// Allow all or Deny all (P1031).
+        case answerAll(ApprovalDecision)
+        /// ⇧ and the system-wide key in Switch sessions: the ring goes back a row, the last after the first (P1033).
+        case switchBack
     }
 
     static let escapeCharacter = "\u{1B}"
 
-    /// The command a key press asks for, or nil when the router leaves it alone.
-    static func command(for key: KeyPress) -> Command? {
+    /// The command a key press asks for, or nil when the router leaves it alone. `keys`: Settings › Shortcuts;
+    /// `switchBack`: the system-wide key with ⇧ in Switch sessions (`GlobalKeyAction.backKey`), else nil.
+    static func command(for key: KeyPress, keys: CardKeys = .standard, switchBack: KeyCombo? = nil) -> Command? {
+        if let switchBack, pressed(key) == switchBack { return .switchBack }
         if key.character == escapeCharacter, !key.control, !key.option, !key.command, !key.shift { return .escape }
         if !key.control, !key.option, !key.command, !key.shift {
             if key.character == IslandKeyRouter.upArrow { return .move(-1) }
             if key.character == IslandKeyRouter.downArrow { return .move(1) }
             if IslandKeyRouter.returnKeys.contains(key.character) { return .open }
         }
-        guard key.control, !key.option, !key.command else { return nil }
-        switch key.character.lowercased() {
-        case "g" where !key.shift: return .jumpToNeedsYou
-        case "a": return .decide(key.shift ? .alwaysAllow : .allowOnce)
-        case "d": return .decide(key.shift ? .denyAndStop : .deny)
-        case "1" where !key.shift: return .option(0)
-        case "2" where !key.shift: return .option(1)
-        case "3" where !key.shift: return .option(2)
-        case "4" where !key.shift: return .option(3)
-        default: return nil
+        guard keys.enabled, keys.holdsModifier(control: key.control, option: key.option, command: key.command) else { return nil }
+        let character = key.character.lowercased()
+        switch keys.action(character, shift: key.shift) {
+        case .jump: return .jumpToNeedsYou
+        case .allow: return .decide(.allowOnce)
+        case .alwaysAllow: return .decide(.alwaysAllow)
+        case .deny: return .decide(.deny)
+        case .denyAndStop: return .decide(.denyAndStop)
+        case .allowAll: return .answerAll(.allowOnce)
+        case .denyAll: return .answerAll(.deny)
+        case nil: break
         }
+        guard !key.shift, let index = CardKeys.optionDigits.firstIndex(of: character) else { return nil }
+        return .option(index)
     }
 
-    /// Does what `command` asks on the first session it applies to. Returns false when nothing applied.
-    static func perform(_ command: Command, env: AppEnvironment) -> Bool {
+    /// The press as the system-wide key's recorder would have it, to match a recorded key.
+    static func pressed(_ key: KeyPress) -> KeyCombo? {
+        IslandKeyRouter.pressed(IslandKeyPress(characters: key.character, control: key.control, shift: key.shift, command: key.command,
+                                               option: key.option))
+    }
+
+    /// Does what `command` asks on the first session it applies to. Returns false when nothing applied. `now`: the awake
+    /// clock, for Allow all's guard (`BatchAnswer.press`).
+    static func perform(_ command: Command, env: AppEnvironment, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         let sessions = env.sessions
         switch command {
         case .jumpToNeedsYou:
@@ -119,6 +137,17 @@ enum WindowKeyRouter {
             guard let id = env.windowSelection, RowSelection.windowOrder(env).contains(id) else { return false }
             sessions.jump(id)
             return true
+        case let .answerAll(decision):
+            // What the Needs you line's Allow all or Deny all shows: nothing while fewer than two approvals wait. Eaten
+            // while one of them has just come in (P1032).
+            let cards = BatchAnswer.targets(env)
+            guard cards.count >= BatchAnswer.minimum else { return false }
+            BatchAnswer.press(decision, cards, env: env, now: now)
+            return true
+        case .switchBack:
+            guard let back = RowSelection.cycledBack(env.windowSelection, in: RowSelection.windowOrder(env)) else { return false }
+            env.windowSelection = back
+            return true
         }
     }
 
@@ -131,10 +160,11 @@ enum WindowKeyRouter {
     }
 
     /// While a text field is edited: only the keys that never mean text there (⌃G, ⌃1-⌃4); ⌃A, ⌃D and Esc stay the
-    /// field's. Returns true when the key was handled.
+    /// field's, and with Option every key (⌥ and a key type a character). Returns true when the key was handled.
     static func handleWhileEditing(_ event: NSEvent, env: AppEnvironment) -> Bool {
         if let client = event.window?.firstResponder as? NSTextInputClient, client.hasMarkedText() { return false }
-        guard let key = KeyPress(event), let command = command(for: key), takesWhileEditing(command) else { return false }
+        let keys = env.settings.cardKeys
+        guard let key = KeyPress(event), let command = command(for: key, keys: keys), takesWhileEditing(command, keys: keys) else { return false }
         return handle(key, command, env: env)
     }
 
@@ -142,28 +172,29 @@ enum WindowKeyRouter {
     /// (`KeyRoutingWindow`). Returns true when the key was handled.
     static func handleListKey(_ event: NSEvent, env: AppEnvironment) -> Bool {
         if let client = event.window?.firstResponder as? NSTextInputClient, client.hasMarkedText() { return false }
-        guard let key = KeyPress(event), let command = command(for: key), isListKey(command) else { return false }
+        guard let key = KeyPress(event), let command = command(for: key, keys: env.settings.cardKeys), isListKey(command) else { return false }
         return handle(key, command, env: env)
     }
 
     static func isListKey(_ command: Command) -> Bool {
         switch command {
         case .move, .open: true
-        case .jumpToNeedsYou, .decide, .option, .escape: false
+        case .jumpToNeedsYou, .decide, .option, .escape, .answerAll, .switchBack: false
         }
     }
 
-    static func takesWhileEditing(_ command: Command) -> Bool {
+    static func takesWhileEditing(_ command: Command, keys: CardKeys = .standard) -> Bool {
         switch command {
-        case .jumpToNeedsYou, .option: true
-        case .decide, .escape, .move, .open: false
+        case .jumpToNeedsYou, .option: keys.modifier == .control
+        case .decide, .escape, .move, .open, .answerAll, .switchBack: false
         }
     }
 
     /// Returns true when the key was handled.
     static func handle(_ event: NSEvent, env: AppEnvironment) -> Bool {
         if let client = event.window?.firstResponder as? NSTextInputClient, client.hasMarkedText() { return false }
-        guard let key = KeyPress(event), let command = command(for: key) else { return false }
+        guard let key = KeyPress(event),
+              let command = command(for: key, keys: env.settings.cardKeys, switchBack: GlobalKeyAction.backKey(env.settings)) else { return false }
         return handle(key, command, env: env)
     }
 
@@ -176,8 +207,8 @@ enum WindowKeyRouter {
 
     static func answersACard(_ command: Command) -> Bool {
         switch command {
-        case .decide, .option: true
-        case .jumpToNeedsYou, .escape, .move, .open: false
+        case .decide, .option, .answerAll: true
+        case .jumpToNeedsYou, .escape, .move, .open, .switchBack: false
         }
     }
 }

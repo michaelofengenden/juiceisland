@@ -20,6 +20,8 @@ final class SparkleFeed: NSObject, FeedUpdating, SPUUserDriver, SPUUpdaterDelega
     private var infoURL: URL?
     private var readyReply: ((SPUUserUpdateChoice) -> Void)?
     private var retryTermination: (() -> Void)?
+    /// Settings › About › Install automatically (P1074): Sparkle downloads in the background and installs at quit.
+    private var automatic = false
 
     /// The updater, or nil when this build carries no feed or no public key: updates are off, and About says so.
     static func make(bundle: Bundle = .main) -> SparkleFeed? {
@@ -35,6 +37,8 @@ final class SparkleFeed: NSObject, FeedUpdating, SPUUserDriver, SPUUpdaterDelega
     func start(report: @escaping @MainActor (FeedUpdateEvent) -> Void) {
         self.report = report
         let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: self, delegate: self)
+        // The owner's choice, never Sparkle's own remembered one: Install automatically is off until they turn it on.
+        updater.automaticallyDownloadsUpdates = automatic
         do {
             try updater.start()
         } catch {
@@ -69,6 +73,11 @@ final class SparkleFeed: NSObject, FeedUpdating, SPUUserDriver, SPUUpdaterDelega
         } else {
             retryTermination?()
         }
+    }
+
+    func setAutomaticInstall(_ on: Bool) {
+        automatic = on
+        updater?.automaticallyDownloadsUpdates = on
     }
 
     // MARK: SPUUserDriver
@@ -148,6 +157,16 @@ final class SparkleFeed: NSObject, FeedUpdating, SPUUserDriver, SPUUpdaterDelega
     }
 
     // MARK: SPUUpdaterDelegate
+
+    /// Install automatically downloaded a version by itself (P1074): it installs when the app quits, as Sparkle does; the
+    /// control offers Restart to update for it meanwhile, which goes through Sparkle's own check of the download. Sparkle's
+    /// scheduler keeps running (false), so a later check can offer it as downloaded.
+    nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                             immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        let version = item.displayVersionString
+        MainActor.assumeIsolated { report?(.installsOnQuit(version: version)) }
+        return false
+    }
 
     /// The daily check found nothing (Check now's answer comes through `showUpdateNotFoundWithError` too).
     nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {

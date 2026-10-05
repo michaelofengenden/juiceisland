@@ -18,7 +18,7 @@ struct ProfileHookManagerTests {
             root = URL(fileURLWithPath: ProfileHookTargets.normalized(
                 FileManager.default.temporaryDirectory.appendingPathComponent("ji-hooks-\(UUID().uuidString)").path))
             bundledHelper = root.appendingPathComponent("bundle/OpenIslandHooks")
-            managedHelper = root.appendingPathComponent("managed/bin/OpenIslandHooks")
+            managedHelper = root.appendingPathComponent("managed/bin/JuiceHooks")
             try FileManager.default.createDirectory(at: bundledHelper.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bundledHelper)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundledHelper.path)
@@ -49,8 +49,10 @@ struct ProfileHookManagerTests {
         }
     }
 
+    /// Install writes all 14 events naming Juice's own helper, backs the file up and writes no manifest: Open Island
+    /// reads its own under that name (P900, P901).
     @Test
-    func claudeInstallWritesAll14EventsAManifestAndABackup() async throws {
+    func claudeInstallWritesAll14EventsABackupAndNoManifest() async throws {
         let box = try Sandbox()
         let target = try box.profile(.claude, ".claude-work", files: ["settings.json": #"{"model":"opus"}"#])
         let manager = box.manager()
@@ -61,10 +63,124 @@ struct ProfileHookManagerTests {
         #expect(status.state == .installed)
         #expect(status.managedEventCount == 14)
         #expect(status.intent == .installed)
-        #expect(box.read(target, ClaudeHookInstallerManifest.fileName) != nil)
+        #expect(box.read(target, ClaudeHookInstallerManifest.fileName) == nil)
         let files = try FileManager.default.contentsOfDirectory(atPath: target.folder)
         #expect(files.contains { $0.hasPrefix("settings.json.backup.") })
         #expect(box.read(target, "settings.json")?.contains("\"model\"") == true)
+        #expect(box.read(target, "settings.json")?.contains("JuiceHooks' --source claude") == true)
+        #expect(FileManager.default.isExecutableFile(atPath: box.managedHelper.path))
+    }
+
+    /// Install then Remove gives every file back byte for byte, in whatever layout the owner keeps it (P916).
+    @Test
+    func installThenRemoveGivesEveryFileBackByteForByte() async throws {
+        let box = try Sandbox()
+        let claude = "{\n    \"model\": \"opus\",\n    \"hooks\": {\n        \"Stop\": [\n            {\n                \"hooks\": [\n                    {\"type\": \"command\", \"command\": \"say done\"}\n                ]\n            }\n        ]\n    }\n}\n"
+        let compact = #"{"permissions":{"allow":["Bash(ls)"]}}"#
+        let codexHooks = "{\n  \"hooks\": {\n    \"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"say done\"}]}]\n  }\n}\n"
+        let pretty = try box.profile(.claude, ".claude-work", files: ["settings.json": claude])
+        let oneLine = try box.profile(.claude, ".claude-lab", files: ["settings.json": compact])
+        let codex = try box.profile(.codex, ".codex-side", files: ["hooks.json": codexHooks, "config.toml": "model = \"gpt-5\"\n"])
+        let bare = try box.profile(.codex, ".codex-fresh")
+        let switchedOff = "model = \"gpt-5\"\n\n[features]\ncodex_hooks = false\nweb_search = true\n"
+        let off = try box.profile(.codex, ".codex-preset", files: ["config.toml": switchedOff])
+        let manager = box.manager()
+        await manager.refresh([pretty, oneLine, codex, bare, off])
+        for target in [pretty, oneLine, codex, bare, off] { try await manager.install(target) }
+        #expect(box.read(pretty, "settings.json")?.contains("say done") == true)
+        #expect(box.read(off, "config.toml")?.contains("codex_hooks = false") == false)
+        for target in [pretty, oneLine, codex, bare, off] { try await manager.remove(target) }
+        #expect(box.read(pretty, "settings.json") == claude)
+        #expect(box.read(oneLine, "settings.json") == compact)
+        #expect(box.read(codex, "hooks.json") == codexHooks)
+        // Codex's hooks feature stays on while someone else's hook needs it; Juice turns off only what it turned on.
+        #expect(box.read(codex, "config.toml")?.hasPrefix("model = \"gpt-5\"\n") == true)
+        #expect(box.read(codex, "config.toml")?.contains("hooks = true") == true)
+        // The switch goes back as it was: a config.toml Install made goes, a line it turned on comes back (P910).
+        #expect(box.read(bare, "hooks.json") == nil && box.read(bare, "config.toml") == nil)
+        #expect(box.read(off, "config.toml") == switchedOff)
+    }
+
+    /// Hooks that still call Open Island's helper read as the old helper, with no drift row; Repair (Move) puts Juice's in
+    /// their place and keeps everyone else's (P903).
+    @Test
+    func oldHelperHooksMoveToJuicesHelper() async throws {
+        let box = try Sandbox()
+        let old = "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source claude"
+        let settings = #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\#(old)"}]},{"hooks":[{"type":"command","command":"say done"}]}],"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"\#(old)"}]}]}}"#
+        let target = try box.profile(.claude, ".claude-work", files: ["settings.json": settings])
+        // Juice set these up before its own helper (P932).
+        ProfileHookIntentStore(defaults: box.defaults).setIntent(.installed, for: target.id)
+        let manager = box.manager()
+        await manager.refresh([target])
+        await manager.checkDrift([target])
+        #expect(manager.statuses[target.id]?.state == .oldHelper(entries: 2))
+        #expect(manager.driftAlerts[target.id] == nil)
+        #expect(manager.choice(for: target.id) == ProfileHookChoice(action: .repair, refusal: nil))
+
+        let moved = try await manager.repair(target)
+        #expect(moved.state == .installed && moved.oldEntryCount == 0)
+        let text = try #require(box.read(target, "settings.json"))
+        #expect(!text.contains("OpenIslandHooks") && text.contains("say done"))
+    }
+
+    /// Open Island's own hooks, in a profile Juice never set up: not Juice's to move. Connect puts Juice's beside them,
+    /// they stay Open Island's afterwards, and Remove gives the file back byte for byte (P932).
+    @Test
+    func openIslandsOwnHooksAreNotJuicesToMove() async throws {
+        let box = try Sandbox()
+        let old = "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source claude"
+        let settings = #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\#(old)"}]}]}}"#
+        let target = try box.profile(.claude, ".claude-work", files: ["settings.json": settings])
+        let manager = box.manager()
+        await manager.refresh([target])
+        await manager.checkDrift([target])
+        #expect(manager.statuses[target.id]?.state == .notInstalled)
+        #expect(manager.choice(for: target.id) == ProfileHookChoice(action: .install, refusal: nil))
+        let installed = try await manager.install(target)
+        #expect(installed.state == .installed && installed.oldEntryCount == 0)
+        #expect(box.read(target, "settings.json")?.contains("OpenIslandHooks") == true)
+        await manager.refresh([target])
+        #expect(manager.statuses[target.id]?.state == .installed)
+        try await manager.remove(target)
+        #expect(box.read(target, "settings.json") == settings)
+    }
+
+    /// Remove (and so Remove from all agents) takes Juice's older entries, still on Open Island's helper, as well (P932).
+    @Test
+    func removeTakesJuicesOlderHooksToo() async throws {
+        let box = try Sandbox()
+        let old = "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source claude"
+        let settings = #"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"\#(old)"}]}]}}"#
+        let target = try box.profile(.claude, ".claude-work", files: ["settings.json": settings])
+        ProfileHookIntentStore(defaults: box.defaults).setIntent(.installed, for: target.id)
+        let manager = box.manager()
+        await manager.refresh([target])
+        let removed = try await manager.remove(target)
+        #expect(removed.state == .notInstalled && box.read(target, "settings.json") == #"{"model":"opus"}"#)
+    }
+
+    /// Remove takes Juice's entries and nothing else: Open Island's helper and Vibe Island's stay (P904).
+    @Test
+    func removeLeavesOpenIslandsAndVibeIslandsHooks() async throws {
+        let box = try Sandbox()
+        let target = try box.profile(.claude, ".claude-work")
+        let manager = box.manager()
+        await manager.refresh([target])
+        try await manager.install(target)
+        let url = URL(fileURLWithPath: target.folder).appendingPathComponent("settings.json")
+        var root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var hooks = try #require(root["hooks"] as? [String: Any])
+        var stop = try #require(hooks["Stop"] as? [[String: Any]])
+        stop.append(["hooks": [["type": "command", "command": "/bin/sh -c '$HOME/.vibe-island/bin/vibe-island-bridge --source claude'"]]])
+        hooks["Stop"] = stop
+        root["hooks"] = hooks
+        try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]).write(to: url)
+        await manager.refresh([target])
+
+        try await manager.remove(target)
+        let text = try #require(box.read(target, "settings.json"))
+        #expect(text.contains("vibe-island-bridge") && !text.contains("JuiceHooks"))
     }
 
     @Test
@@ -98,32 +214,6 @@ struct ProfileHookManagerTests {
             try await manager.install(target)
         }
         #expect(box.read(target, "settings.json") == settings)
-    }
-
-    @Test
-    func removeRefusesWhileVibeHooksArePresentAndTheFileStaysByteIdentical() async throws {
-        let box = try Sandbox()
-        let target = try box.profile(.claude, ".claude-work")
-        let manager = box.manager()
-        await manager.refresh([target])
-        try await manager.install(target)
-
-        // Vibe Island adds its hook after ours. Upstream's Claude uninstaller would delete it along with ours.
-        let settingsURL = URL(fileURLWithPath: target.folder).appendingPathComponent("settings.json")
-        var root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any])
-        var hooks = try #require(root["hooks"] as? [String: Any])
-        var stop = try #require(hooks["Stop"] as? [[String: Any]])
-        stop.append(["hooks": [["type": "command", "command": "/bin/sh -c '$HOME/.vibe-island/bin/vibe-island-bridge --source claude'"]]])
-        hooks["Stop"] = stop
-        root["hooks"] = hooks
-        try JSONSerialization.data(withJSONObject: root).write(to: settingsURL)
-        let before = try Data(contentsOf: settingsURL)
-
-        await #expect(throws: ProfileHookError.otherIslandHooksPresent(count: 1)) {
-            try await manager.remove(target)
-        }
-        #expect(try Data(contentsOf: settingsURL) == before)
-        #expect(manager.statuses[target.id]?.vibeEntryCount == 1)
     }
 
     @Test
@@ -228,16 +318,14 @@ struct ProfileHookManagerTests {
         for name in others { #expect(names.contains(name)) }
     }
 
+    /// Open Island running holds nothing up any more: Juice's hooks name its own helper (P900).
     @Test
-    func nothingIsWrittenWhileOpenIslandRuns() async throws {
+    func openIslandRunningHoldsNothingUp() async throws {
         let box = try Sandbox()
         let target = try box.profile(.claude, ".claude-work")
         let manager = box.manager(openIslandRunning: true)
         await manager.refresh([target])
-        await #expect(throws: ProfileHookError.openIslandAppRunning) {
-            try await manager.install(target)
-        }
-        #expect(box.read(target, "settings.json") == nil)
+        #expect(try await manager.install(target).state == .installed)
     }
 
     @Test
@@ -293,19 +381,15 @@ struct ProfileHookManagerTests {
         #expect(try manager.syncHelperIfPresent() == false)
     }
 
+    /// Juice's own helper is updated whether Open Island runs or not, and no staging file is left (P900).
     @Test
-    func helperSyncWaitsForOpenIslandToQuitAndLeavesNoStagingFile() throws {
+    func helperSyncLeavesNoStagingFileWhateverOpenIslandDoes() throws {
         let box = try Sandbox()
         try FileManager.default.createDirectory(at: box.managedHelper.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("old".utf8).write(to: box.managedHelper)
-        #expect(throws: ProfileHookError.openIslandAppRunning) {
-            try box.manager(openIslandRunning: true).syncHelperIfPresent()
-        }
-        #expect(try Data(contentsOf: box.managedHelper) == Data("old".utf8))
-
-        #expect(try box.manager().syncHelperIfPresent() == true)
+        #expect(try box.manager(openIslandRunning: true).syncHelperIfPresent() == true)
         let folder = try FileManager.default.contentsOfDirectory(atPath: box.managedHelper.deletingLastPathComponent().path)
-        #expect(folder == ["OpenIslandHooks"])
+        #expect(folder == ["JuiceHooks"])
         #expect(FileManager.default.isExecutableFile(atPath: box.managedHelper.path))
     }
 

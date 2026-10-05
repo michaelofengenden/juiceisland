@@ -1,5 +1,6 @@
 import Foundation
 import IslandEngine
+import IslandHookNotes
 import Observation
 import OpenIslandCore
 
@@ -51,9 +52,12 @@ final class EngineSessionsModel: SessionsModel {
     @ObservationIgnored private var approvalContents: [String: (requestID: UUID, read: Bool, content: ApprovalContent.Mapped)] = [:]
     /// What each card sent and how that went, by session (P129): kept while its request, question or finished turn is.
     @ObservationIgnored private var sends: [String: SendRecord] = [:]
-    /// When each waiting card began to wait, as an order: the engine request it shows, and its place (P130).
-    @ObservationIgnored private var arrivals: [String: (key: String, order: Int)] = [:]
+    /// When each waiting card began to wait, as an order: the engine request it shows, and its place (P130); and when,
+    /// on the awake clock (`waitingSince`), nil for one that already waited at the first mapping.
+    @ObservationIgnored private var arrivals: [String: (key: String, order: Int, at: TimeInterval?)] = [:]
     @ObservationIgnored private var nextArrival = 0
+    /// Past the first mapping: a card that begins to wait from then on came in while the owner could be looking.
+    @ObservationIgnored private var mappedOnce = false
     @ObservationIgnored private var minuteTimer: Timer?
 
     static let requestedJumpLimit = 20
@@ -104,6 +108,7 @@ final class EngineSessionsModel: SessionsModel {
         self.noteLifetime = noteLifetime
         minute = Self.minute(of: clock())
         shown = current()
+        mappedOnce = true
         // A branch read that changed what a row shows maps the rows again.
         branches.changed = { [weak self] in
             self?.mapped = nil
@@ -148,6 +153,11 @@ final class EngineSessionsModel: SessionsModel {
         return rows.sorted { (arrivals[$0.id]?.order ?? .max) < (arrivals[$1.id]?.order ?? .max) }
     }
 
+    func waitingSince(_ sessionID: String) -> TimeInterval? {
+        _ = current()
+        return arrivals[sessionID]?.at
+    }
+
     // MARK: Publishing
 
     /// The rows and cards now: the last mapping, or a new one when the engine changed since. Mapping watches what it
@@ -189,14 +199,15 @@ final class EngineSessionsModel: SessionsModel {
     /// Gives each card that began to wait since the last mapping its place in the queue; a session that asks again
     /// (a new request or question, or the next one of its queue) goes to the back.
     private func noteArrivals(_ rows: [SessionRow]) {
-        var kept: [String: (key: String, order: Int)] = [:]
+        var kept: [String: (key: String, order: Int, at: TimeInterval?)] = [:]
+        let now = mappedOnce ? ProcessInfo.processInfo.systemUptime : nil
         for row in rows where row.hasCard {
             guard let key = engine.attentionHead(for: row.id)?.id else { continue }
             if let known = arrivals[row.id], known.key == key {
                 kept[row.id] = known
             } else {
                 nextArrival += 1
-                kept[row.id] = (key, nextArrival)
+                kept[row.id] = (key, nextArrival, now)
             }
         }
         arrivals = kept
@@ -251,7 +262,7 @@ final class EngineSessionsModel: SessionsModel {
     /// with none, a finished turn's card. A phase that says waiting with no request behind it opens nothing (P161).
     private func makeCard(for sessionID: String) -> SessionCard? {
         guard let session = engine.state.session(id: sessionID) else { return nil }
-        let agent = Self.agent(session)
+        let agent = self.agent(session)
         if let head = engine.attentionHead(for: sessionID) { return waitingCard(session, head: head, agent: agent) }
         switch session.phase {
         case .running:
@@ -613,6 +624,7 @@ final class EngineSessionsModel: SessionsModel {
     }
 
     func islandShows(requestID: String?) { engine.islandShows(requestID: requestID) }
+    func windowShows(requestIDs: Set<String>) { engine.windowShows(requestIDs: requestIDs) }
 
     /// The session's open request a card's button acts on: the one the card showed (`requestID`) while it is still
     /// open; with no id, the session's head.
@@ -668,14 +680,14 @@ final class EngineSessionsModel: SessionsModel {
         // SSH host it came from (P745).
         let remote = engine.remoteHost(for: session.id)
         let localFolder = remote == nil ? workingDirectory : nil
-        let title = Self.title(engine.chatTitle(for: session), project: project, agent: Self.agent(session))
+        let title = Self.title(engine.chatTitle(for: session), project: project, agent: agent(session))
         // The flag alone misses a thread the app's hooks made (P665).
         let isCodexApp = engine.isCodexAppThread(session)
         return SessionRow(
-            id: session.id, agent: Self.agent(session), bucket: bucket, project: project,
+            id: session.id, agent: agent(session), bucket: bucket, project: project,
             folder: localFolder.flatMap { $0.isEmpty ? nil : $0 }, task: title.text,
             status: status, detail: detail, lastPrompt: Self.lastPrompt(session),
-            host: remote?.hostName ?? (isCodexApp ? "Codex.app" : Self.host(session.jumpTarget?.terminalApp, agent: Self.agent(session))),
+            host: remote?.hostName ?? (isCodexApp ? "Codex.app" : Self.host(session.jumpTarget?.terminalApp, agent: agent(session))),
             accountAlias: engine.accountTag(for: session.id).map { tag in tag.accountID.flatMap(aliasForAccountID) ?? tag.alias },
             updatedAt: session.updatedAt, isCodexApp: isCodexApp, glyph: glyph, glyphState: glyphState,
             hasCard: head != nil, activeSince: engine.activeSince(for: session), asker: head.flatMap(Self.asker),
@@ -686,7 +698,8 @@ final class EngineSessionsModel: SessionsModel {
                                                           metadata: session.claudeMetadata?.worktreeBranch),
             firstPrompt: engine.firstPrompt(for: session), remoteHost: remote?.hostName, limit: limit,
             // An SSH session's folders are the host's: never one of this Mac's accounts (P816).
-            account: remote != nil ? nil : engine.accountTag(for: session.id).map { RowAccount(provider: $0.provider, folder: $0.folder, accountID: $0.accountID) })
+            account: remote != nil ? nil : engine.accountTag(for: session.id).map { RowAccount(provider: $0.provider, folder: $0.folder, accountID: $0.accountID) },
+            waitsOnIsland: head?.waitsOnIslandAlone == true)
     }
 
     /// The limit or API error the session's last turn stopped on, worded at this mapping's time (P700), with its account
@@ -792,6 +805,20 @@ final class EngineSessionsModel: SessionsModel {
     static func nonEmpty(_ text: String?) -> String? {
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return text
+    }
+
+    /// The session's own agent, with the label the engine took from its hooks (Copilot, Devin, Kilo, an agent behind
+    /// Claude's hooks, P913).
+    func agent(_ session: AgentSession) -> GlyphPalette.Agent { Self.agent(engine.agent(of: session)) }
+
+    /// An agent kind as the rows draw it: Claude's and Codex's own marks, an agent upstream has a tool for as that tool,
+    /// and the rest as themselves.
+    static func agent(_ kind: AgentKind) -> GlyphPalette.Agent {
+        switch kind {
+        case .claude: .claude
+        case .codex: .codex
+        default: AgentKind(tool: kind.carrierTool) == kind ? .other(kind.carrierTool) : .kind(kind)
+        }
     }
 
     /// The session's own agent: a Claude Code fork (Kimi, Qwen, Factory, …) or any other agent the engine knows is

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Settings › Island › Mute rules (P420, P421): one row per rule, what it matches (Folder, Title or First prompt), the
-/// text that contains, whose (Any agent or one) and its remove button; the header's "+" adds a rule, and with none one row
+/// Settings › Island › Mute rules (P420, P421, P1010): one row per rule, what it matches (Folder, Title, First prompt or
+/// Tool), the text that contains (a Tool rule's, the tool's name, `*` for any run), whose (Any agent or one) and its
+/// remove button; the header's "+" adds a rule, and with none one row
 /// offers Add Rule. Under the rules, how many sessions they match now, live as the owner types. A rule is kept as it is
 /// typed; one with no text matches nothing.
 struct MuteRulesSection: View {
@@ -71,7 +72,7 @@ struct MuteRulesSection: View {
 enum MuteRulesText {
     static let title = "Mute rules"
     /// The one row with no rule: what a rule matches.
-    static let empty = "Match a folder, title or first prompt"
+    static let empty = "Match a folder, title, prompt or tool"
 
     /// The empty field's grey hint: what the text is matched against.
     static func prompt(_ field: MuteRule.Field) -> String {
@@ -79,6 +80,7 @@ enum MuteRulesText {
         case .folder: "Folder contains…"
         case .title: "Title contains…"
         case .prompt: "Prompt contains…"
+        case .tool: "Bash, mcp__github__*…"
         }
     }
 }

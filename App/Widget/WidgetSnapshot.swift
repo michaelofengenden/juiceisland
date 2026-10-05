@@ -182,6 +182,7 @@ extension WidgetSnapshot {
         case .claude: "claude"
         case .codex: "codex"
         case let .other(tool): tool.rawValue
+        case let .kind(kind): "kind:" + kind.rawValue
         }
     }
 

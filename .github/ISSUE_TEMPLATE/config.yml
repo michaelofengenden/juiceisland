@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A security problem
+    url: https://github.com/michaelofengenden/juiceisland/security/advisories/new
+    about: Report it privately here, never in an issue. SECURITY.md says what helps.
+  - name: A question
+    url: https://github.com/michaelofengenden/juiceisland/discussions
+    about: Ask in Discussions.

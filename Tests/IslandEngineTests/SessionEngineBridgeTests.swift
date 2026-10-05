@@ -18,12 +18,15 @@ struct SessionEngineStartTests {
     typealias Box = EngineFixtures.Box
 
     /// An engine whose bridge, socket probe and runtime are all stand-ins, counted in the boxes.
+    /// `onOpenIslandsSocket` makes the bridge's scratch path stand in for Open Island's own.
     private func engine(otherIsland: Bool = false, owned: Set<String> = [], failingBinds: Int = 0,
+                        onOpenIslandsSocket: Bool = false, socket: URL? = nil,
                         binds: Box<[URL]>, runtimeStarts: Box<Int>) -> SessionEngine {
         var configuration = SessionEngine.Configuration.headless
         configuration.startBridge = true
         configuration.loadRuntimeState = true
-        configuration.socketURL = URL(fileURLWithPath: "/tmp/juice-island-test-\(UUID().uuidString).sock")
+        configuration.socketURL = socket ?? URL(fileURLWithPath: "/tmp/juice-island-test-\(UUID().uuidString).sock")
+        if onOpenIslandsSocket { configuration.openIslandSocketURL = configuration.socketURL }
         var dependencies = SessionEngine.Dependencies()
         dependencies.isOtherIslandRunning = { otherIsland }
         dependencies.socketHasOwner = { owned.contains($0.path) }
@@ -37,30 +40,51 @@ struct SessionEngineStartTests {
         return SessionEngine(configuration: configuration, dependencies: dependencies)
     }
 
+    /// A bridge on Open Island's own socket is refused while Open Island runs.
     @Test
-    func startingTheBridgeIsRefusedWhileOpenIslandRuns() {
+    func onOpenIslandsSocketStartingIsRefusedWhileOpenIslandRuns() {
         let binds = Box<[URL]>([])
         let runtimeStarts = Box(0)
-        let engine = engine(otherIsland: true, binds: binds, runtimeStarts: runtimeStarts)
+        let engine = engine(otherIsland: true, onOpenIslandsSocket: true, binds: binds, runtimeStarts: runtimeStarts)
         #expect(throws: SessionEngineError.otherIslandRunning) { try engine.start() }
         #expect(engine.isBridgeReady == false)
         #expect(binds.current.isEmpty)
         #expect(runtimeStarts.current == 0)
     }
 
-    /// A2: a live listener on either hook socket is never taken over, whoever owns it.
+    /// On its own socket (P900) the bridge starts beside Open Island, and a listener on the legacy `/tmp` path (Open
+    /// Island's, which no current helper dials) is no reason to refuse (P912).
+    @Test
+    func onItsOwnSocketTheBridgeStartsBesideOpenIsland() throws {
+        let binds = Box<[URL]>([])
+        let runtimeStarts = Box(0)
+        let engine = engine(otherIsland: true, owned: [BridgeSocketLocation.legacyURL.path], binds: binds,
+                            runtimeStarts: runtimeStarts)
+        try engine.start()
+        defer { engine.stop() }
+        #expect(binds.current == [engine.configuration.socketURL] && runtimeStarts.current == 1)
+    }
+
+    /// A2: a live listener on the bridge's socket is never taken over, whoever owns it; on Open Island's socket the
+    /// legacy one is not either.
     @Test
     func aLiveHookSocketIsNeverTakenOver() {
         let legacy = BridgeSocketLocation.legacyURL.path
-        let binds = Box<[URL]>([])
-        let runtimeStarts = Box(0)
-        let engine = engine(owned: [legacy], binds: binds, runtimeStarts: runtimeStarts)
-        #expect(throws: SessionEngineError.hookSocketInUse(path: legacy)) { try engine.start() }
-        #expect(binds.current.isEmpty)
-        #expect(runtimeStarts.current == 0)
-        #expect(engine.hasStarted == false)
-        #expect(HookSocketProbe.paths(for: engine.configuration.socketURL).map(\.path)
-                == [engine.configuration.socketURL.path, BridgeSocketLocation.defaultURL.path, legacy])
+        for onOpenIslands in [false, true] {
+            let binds = Box<[URL]>([])
+            let runtimeStarts = Box(0)
+            let socket = URL(fileURLWithPath: "/tmp/juice-island-probe-\(UUID().uuidString).sock")
+            var engine = self.engine(owned: [socket.path], onOpenIslandsSocket: onOpenIslands, socket: socket, binds: binds,
+                                     runtimeStarts: runtimeStarts)
+            #expect(throws: SessionEngineError.hookSocketInUse(path: socket.path)) { try engine.start() }
+            #expect(binds.current.isEmpty && runtimeStarts.current == 0 && engine.hasStarted == false)
+            #expect(HookSocketProbe.paths(for: socket).map(\.path) == [socket.path, legacy])
+            if onOpenIslands {
+                engine = self.engine(owned: [legacy], onOpenIslandsSocket: true, binds: binds, runtimeStarts: runtimeStarts)
+                #expect(throws: SessionEngineError.hookSocketInUse(path: legacy)) { try engine.start() }
+                #expect(binds.current.isEmpty)
+            }
+        }
     }
 
     /// A2: stale or missing socket files are replaced as upstream does.

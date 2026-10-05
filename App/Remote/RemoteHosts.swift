@@ -15,7 +15,7 @@ struct RemoteHostRecord: Codable, Equatable, Sendable, Identifiable {
     var reached: Bool? = nil
 }
 
-/// One host's row in Settings › Setup › SSH hosts: its name, its state in a word or two, and the one button the state
+/// One host's row in Settings › Agents › SSH hosts: its name, its state in a word or two, and the one button the state
 /// needs, with Remove beside it.
 struct RemoteHostRow: Identifiable, Equatable, Sendable {
     enum Action: Equatable, Sendable { case setUp, connect }

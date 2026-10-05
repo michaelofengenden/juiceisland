@@ -1,13 +1,17 @@
+import AppKit
 import IslandEngine
+import JuiceCore
 import SwiftUI
 
 /// Settings › Island (spec §4.5): look and screen, usage, sessions, quiet, mute rules. Labels only, except Glance, Quota
 /// alerts, Questions open the island (off), Stalled after, Archive idle sessions after, Show scripted runs, Answer
-/// subagents and Answer Codex on the island, Quiet while locked and Quiet hours, whose effects are not obvious.
-/// Owner: stream A.
+/// subagents and Answer Codex on the island, Quiet while locked, Quiet while presenting, Quiet during Focus and Quiet
+/// hours, whose effects are not obvious. Owner: stream A.
 struct IslandPane: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Bumped when a display comes, goes or changes, so Display lists the screens connected now.
+    @State private var screensChanged = 0
 
     var body: some View {
         @Bindable var settings = env.settings
@@ -43,8 +47,23 @@ struct IslandPane: View {
                 FormRow("Style") {
                     SettingsSegmented(selection: $settings.islandStyle, options: [(.clean, "Clean"), (.detailed, "Detailed")], label: "Island style")
                 }
-                FormRow("Display") {
-                    SettingsPopup(selection: $settings.islandDisplay, options: DisplayChoices.island, label: "Island display")
+                // Clean only: Detailed rows always say both (P1015).
+                if IslandPaneText.showsRowFactRows(settings.islandStyle) {
+                    FormRow("Show model") {
+                        SettingsSwitch(isOn: $settings.rowShowsModel, label: "Show the model on rows")
+                    }
+                    FormRow("Show branch") {
+                        SettingsSwitch(isOn: $settings.rowShowsBranch, label: "Show the branch on rows")
+                    }
+                }
+                // The connected screens (P940): Automatic, Follow focus, or one screen, listed again when a display comes or goes.
+                let displays = IslandDisplays.connected()
+                if IslandDisplays.showsRow(displays, stored: settings.islandDisplay) {
+                    FormRow("Display", subtitle: IslandDisplays.subtitle(displays, stored: settings.islandDisplay)) {
+                        SettingsPopup(selection: $settings.islandDisplay, options: IslandDisplays.choices(displays, stored: settings.islandDisplay),
+                                      label: "Island display")
+                    }
+                    .id(screensChanged)
                 }
                 FormRow("Width") {
                     SettingsSegmented(selection: $settings.islandWidth, options: IslandPaneText.widths, label: "Island width")
@@ -53,7 +72,7 @@ struct IslandPane: View {
                     SettingsSegmented(selection: $settings.islandTextSize, options: IslandPaneText.textSizes, label: "Island text size")
                 }
                 // Under Reduce Motion the island only fades and snaps, the same in either feel.
-                if IslandPaneText.showsMotionRow(reduceMotion: reduceMotion) {
+                if IslandPaneText.showsMotionRow(reduceMotion: reduceMotion, flavor: env.flavor) {
                     FormRow("Motion") {
                         SettingsSegmented(selection: $settings.islandMotion, options: IslandPaneText.motions, label: "Island motion")
                     }
@@ -172,6 +191,16 @@ struct IslandPane: View {
                 FormRow("Quiet while locked", subtitle: IslandPaneText.quietWhileLocked) {
                     SettingsSwitch(isOn: $settings.quietWhileLocked, label: "Quiet while locked")
                 }
+                FormRow("Quiet while presenting", subtitle: IslandPaneText.quietWhilePresenting) {
+                    SettingsSwitch(isOn: $settings.quietWhilePresenting, label: "Quiet while presenting")
+                }
+                // A Focus is heard through the app's Focus filter, set in System Settings (P1006).
+                FormRow("Quiet during Focus", subtitle: IslandPaneText.focus(quietNow: env.quietScenes?.focusQuiet == true,
+                                                                                 product: env.flavor.productName)) {
+                    PushButton(title: "Open", small: true) { FocusSettings.open() }
+                        .help("Open System Settings › Focus")
+                        .accessibilityLabel("Open Focus settings")
+                }
                 FormRow("Quiet hours", subtitle: IslandPaneText.quietHours) {
                     SettingsSwitch(isOn: $settings.quietHours, label: "Quiet hours")
                 }
@@ -182,6 +211,9 @@ struct IslandPane: View {
                 }
             }
             MuteRulesSection(rules: $settings.muteRules)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            screensChanged &+= 1
         }
     }
 }
@@ -231,6 +263,18 @@ enum IslandPaneText {
     /// What Quiet while locked does once the owner is back, which its name alone does not say (P423).
     static let quietWhileLocked = "What waits shows on unlock."
 
+    /// What Quiet while presenting hears (P1005): mirroring only, as no app may see a screen being shared (P1004).
+    static let quietWhilePresenting = "While the screen is mirrored."
+
+    /// Quiet during Focus: where it is set (the app's Focus filter, P1006), or, while a Focus quiets the island, that it
+    /// does. `product`: the flavor's name, as System Settings lists the app.
+    static func focus(quietNow: Bool, product: String = Product.name) -> String {
+        quietNow ? "Quiet now, for a Focus." : "Add \(product) as a filter in System Settings › Focus."
+    }
+
+    /// Show model and Show branch show only under Clean: Detailed rows always say both (P1015).
+    static func showsRowFactRows(_ style: IslandStyle) -> Bool { style == .clean }
+
     /// Motion's three feels, as its segments name them.
     static let motions: [(MotionFeel, String)] = [(.original, "Original"), (.refined, "Refined"), (.liquid, "Liquid")]
 
@@ -252,8 +296,9 @@ enum IslandPaneText {
     /// State tint shows under Black (an edge), Glass and Solid (a veil); Smoke takes none.
     static func showsStateTintRow(_ theme: JuiceTheme) -> Bool { theme != .smoke }
 
-    /// Motion shows only while macOS Reduce Motion is off: with it on, the island only fades and snaps in either feel.
-    static func showsMotionRow(reduceMotion: Bool) -> Bool { !reduceMotion }
+    /// Motion shows only while macOS Reduce Motion is off: with it on, the island only fades and snaps in either feel. It
+    /// is the owner's A/B, so the public flavor never shows it and runs on its default (P1060); Hover stays in both.
+    static func showsMotionRow(reduceMotion: Bool, flavor: AppFlavor = .current) -> Bool { !reduceMotion && !flavor.isPublic }
 
     /// Width's and Text size's steps (`IslandSize`), in points: the numbers alone.
     static let widths: [(Int, String)] = IslandSize.widths.map { ($0, "\($0)") }
@@ -319,9 +364,8 @@ private struct GlyphPreviewGround: ViewModifier {
     }
 }
 
-/// Display pop-up choices. nil is "the display with the notch" (or the main display when none has one). The real
-/// list of screens comes from `NSScreen` when the app runs; renders and demo builds show these names.
+/// The desktop panel's Display choices in renders and tests: nil is the primary display. The app lists the connected
+/// screens (`PanelDisplays.provider`); the island's list is `IslandDisplays`.
 enum DisplayChoices {
-    static let island: [(String?, String)] = [(nil, "Notch display"), ("built-in", "Built-in Retina Display"), ("studio", "Studio Display")]
     static let panel: [(String?, String)] = [(nil, "Built-in Retina Display"), ("studio", "Studio Display")]
 }

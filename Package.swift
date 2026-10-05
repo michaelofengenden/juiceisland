@@ -12,7 +12,8 @@ let package = Package(
     products: [
         .library(name: "IslandEngine", targets: ["IslandEngine"]),
         .library(name: "JuiceIslandUI", targets: ["JuiceIslandUI"]),
-        // The superset helper (spec §3.2, §3.8): same product name and path as upstream's, so hook commands never change.
+        // The superset helper (spec §3.2, §3.8), built under upstream's product name and bundled as
+        // Contents/Helpers/OpenIslandHooks; Connect installs it as `<the app's home>/bin/JuiceHooks` (P900).
         .executable(name: "OpenIslandHooks", targets: ["IslandHooks"]),
     ],
     dependencies: [
@@ -38,7 +39,8 @@ let package = Package(
                                                               .product(name: "JuiceCore", package: "JuiceCore")]),
         // The app's views, models and AppKit shell. The Xcode app target (project.yml) is only App/Main/main.swift, so
         // `swift test` renders every view headless (ImageRenderer) without building or launching the app.
-        .target(name: "JuiceIslandUI", dependencies: ["IslandEngine", "OpenIslandCore", .product(name: "JuiceCore", package: "JuiceCore")],
+        .target(name: "JuiceIslandUI", dependencies: ["IslandEngine", "IslandHookNotes", "OpenIslandCore",
+                                                      .product(name: "JuiceCore", package: "JuiceCore")],
                 path: "App", exclude: ["Main"]),
         // The needs-you end-to-end suite runs the built helper (`IslandHooks`) against the engine and the model.
         .testTarget(name: "JuiceIslandUITests", dependencies: ["JuiceIslandUI", "IslandEngine", "OpenIslandCore", "IslandHookNotes", "IslandHooks",

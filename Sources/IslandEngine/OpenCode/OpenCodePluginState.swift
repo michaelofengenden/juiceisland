@@ -18,8 +18,8 @@ public enum OpenCodePluginFile: Equatable, Sendable {
     public static func of(contents: Data) -> OpenCodePluginFile {
         let head = String(decoding: contents.prefix(256), as: UTF8.self)
         let firstLine = head.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
-        if firstLine.hasPrefix(OpenCodePlugin.marker) {
-            let digits = firstLine.dropFirst(OpenCodePlugin.marker.count).prefix { $0.isNumber }
+        for marker in [OpenCodePlugin.marker, OpenCodePlugin.olderMarker] where firstLine.hasPrefix(marker) {
+            let digits = firstLine.dropFirst(marker.count).prefix { $0.isNumber }
             return Int(digits).map { .ours(revision: $0) } ?? .foreign
         }
         if firstLine.hasPrefix(OpenCodePlugin.openIslandMarker) { return .openIsland }
@@ -83,10 +83,9 @@ public struct OpenCodePluginChoice: Equatable, Sendable {
     /// Why there is no button, in a few words; nil when there is one.
     public var refusal: String?
 
-    public static let openIslandRunning = "Quit Open Island first"
-
-    public static func of(_ file: OpenCodePluginFile, version: OpenCodeVersion?, openIslandRunning: Bool) -> OpenCodePluginChoice {
-        var choice: OpenCodePluginChoice
+    /// Juice's plugin has a file of its own (P934): Open Island running refuses nothing here.
+    public static func of(_ file: OpenCodePluginFile, version: OpenCodeVersion?) -> OpenCodePluginChoice {
+        let choice: OpenCodePluginChoice
         switch file {
         case .missing:
             choice = OpenCodePluginChoice(word: "Not installed", amber: false, action: .install)
@@ -107,11 +106,6 @@ public struct OpenCodePluginChoice: Equatable, Sendable {
             choice = OpenCodePluginChoice(word: "Linked file", amber: true, action: nil, refusal: "Linked file")
         case .unreadable:
             choice = OpenCodePluginChoice(word: "Unreadable file", amber: true, action: nil, refusal: "Unreadable file")
-        }
-        // Open Island's launch writes its own plugin back, and its bridge owns the socket the plugin talks to.
-        if openIslandRunning, choice.action != nil {
-            choice.action = nil
-            choice.refusal = Self.openIslandRunning
         }
         return choice
     }

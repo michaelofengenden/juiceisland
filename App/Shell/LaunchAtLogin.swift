@@ -73,7 +73,8 @@ final class LaunchAtLogin {
     /// register that reads as not registered now was removed by the owner in System Settings, and stays removed: the
     /// stored choice follows (P140).
     func applyAtLaunch() {
-        guard isAvailable, service.status == .notRegistered else { return }
+        // The welcome's Pick a look has the choice: nothing registers before the owner leaves it (P962).
+        guard isAvailable, !settings.loginItemAwaitsChoice, service.status == .notRegistered else { return }
         if settings.loginItemRegistered {
             if settings.launchAtLogin { settings.launchAtLogin = false }
             return
@@ -82,11 +83,26 @@ final class LaunchAtLogin {
         change(on: true)
     }
 
-    /// The switch.
+    /// The switch, and the welcome's Pick a look as the owner leaves it (P962).
     func set(_ on: Bool) {
+        settings.loginItemAwaitsChoice = false
         guard isAvailable else { return }
         settings.launchAtLogin = on
         change(on: on)
+    }
+
+    /// The welcome's Pick a look, as the owner leaves it (P962): a choice that differs from what macOS says registers or
+    /// unregisters the item; one that matches changes nothing there. Outside /Applications the row was not shown, so
+    /// nothing was chosen: the wait stays, and only Settings' switch registers it later, as after an early close (P973).
+    func chooseAtWelcome(_ on: Bool) {
+        guard isAvailable else { return }
+        refresh()
+        guard on != isOn else {
+            settings.loginItemAwaitsChoice = false
+            settings.launchAtLogin = on
+            return
+        }
+        set(on)
     }
 
     func openSystemSettings() { service.openSystemSettings() }

@@ -172,6 +172,10 @@ private struct PreviewReasonFieldKey: EnvironmentKey { static let defaultValue =
 /// True while ⌥ is held in the focused window (or a render asks for it): No reads "No…", as ⌥-click opens its reason.
 private struct OptionKeyHeldKey: EnvironmentKey { static let defaultValue = false }
 
+/// Settings › Shortcuts as the buttons' hints read it (P1025): set from the settings by `ControlKeyHints`; today's keys
+/// elsewhere.
+private struct CardKeysKey: EnvironmentKey { static let defaultValue = CardKeys.standard }
+
 /// The live island only: where a card's field says whether it holds text, so a finish never replaces it (P96).
 private struct CardDraftReporterKey: EnvironmentKey {
     static let defaultValue: (@MainActor @Sendable (Bool) -> Void)? = nil
@@ -213,28 +217,39 @@ extension EnvironmentValues {
         set { self[OptionKeyHeldKey.self] = newValue }
     }
 
+    var cardKeys: CardKeys {
+        get { self[CardKeysKey.self] }
+        set { self[CardKeysKey.self] = newValue }
+    }
+
     var cardDraftReporter: (@MainActor @Sendable (Bool) -> Void)? {
         get { self[CardDraftReporterKey.self] }
         set { self[CardDraftReporterKey.self] = newValue }
     }
 }
 
-/// Shows the shortcut hints below this view while ⌃ is held, and No's "No…" while ⌥ is: SwiftUI's own modifier-key
-/// tracking for the focused window, no event monitor or tap. A hint already asked for above (a render) stays on.
+/// Shows the shortcut hints below this view while the card keys' modifier (Settings › Shortcuts, ⌃ unless Option was
+/// picked) is held, and No's "No…" while ⌥ is: SwiftUI's own modifier-key tracking for the focused window, no event
+/// monitor or tap. With Keyboard shortcuts off no hint shows. A hint already asked for above (a render) stays on. It hands
+/// the keys below it (`cardKeys`) from the settings, so every button names the key that works.
 struct ControlKeyHints: ViewModifier {
     @Environment(\.showsShortcutHints) private var inherited
     @Environment(\.optionKeyHeld) private var inheritedOption
+    @Environment(AppEnvironment.self) private var env: AppEnvironment?
     @State private var controlHeld = false
     @State private var optionHeld = false
 
     func body(content: Content) -> some View {
+        let keys = env?.settings.cardKeys ?? .standard
+        let held = keys.modifier == .control ? controlHeld : optionHeld
         content
             .onModifierKeysChanged(mask: [.control, .option], initial: true) { _, keys in
                 controlHeld = keys.contains(.control)
                 optionHeld = keys.contains(.option)
             }
-            .environment(\.showsShortcutHints, inherited || controlHeld)
+            .environment(\.showsShortcutHints, inherited || (held && keys.enabled))
             .environment(\.optionKeyHeld, inheritedOption || optionHeld)
+            .environment(\.cardKeys, keys)
     }
 }
 

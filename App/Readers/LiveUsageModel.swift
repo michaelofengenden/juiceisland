@@ -1,4 +1,5 @@
 import Foundation
+import IslandEngine
 import JuiceCore
 import Observation
 
@@ -1006,6 +1007,59 @@ final class LiveUsageModel: UsageModel {
     /// makes are only ever stopped (Stop Monitoring), which Add undoes.
     func canForget(provider: Provider, folder: String) -> Bool {
         NewProfileFolder.name(of: folder, provider: provider, home: home) != nil
+            || !ProfileFolderDiscovery.isFoundByName(folder, home: home)
+    }
+
+    // MARK: A folder at any path (Settings › Accounts › Add Folder…, P1055)
+
+    /// Why Add Folder… cannot take a folder.
+    enum AddFolderProblem: Error, Equatable {
+        /// Edits wait while standalone Juice runs.
+        case cannotEdit
+        /// Neither a Claude nor a Codex profile by the found folders' rule.
+        case notAProfile
+        /// It holds both Claude's and Codex's files: which one is not known.
+        case both
+        /// The app reads it already.
+        case listed
+        /// The home folder: Claude Code keeps its default config at `~/.claude.json`, so the home folder passes the found
+        /// folders' rule, and the panel opens there (W3R-2). It is no config folder.
+        case home
+        /// A folder that holds the home folder (`/Users`, `/`).
+        case aboveHome
+    }
+
+    /// Add Folder…: a Claude or Codex config folder at any path (a fork's, a second account kept outside the home folder)
+    /// joins the account list by its path, read by the same rules as a found folder: its provider from which files exist
+    /// (`ProfileFolderDiscovery.providers`, nothing opened), then asked who is signed in and read through its CLI, as any
+    /// folder. Only the path is kept, in the account list, never anything from inside it. A folder forgotten before comes
+    /// back; one switched off is switched on. Its row then offers Setup's Install for its session hooks.
+    @discardableResult
+    func addFolder(at path: String) -> Result<Account, AddFolderProblem> {
+        guard canEdit else { return .failure(.cannotEdit) }
+        let folder = URL(fileURLWithPath: path).standardizedFileURL.path
+        if let problem = Self.homeProblem(folder, home: home) { return .failure(problem) }
+        let providers = ProfileFolderDiscovery.providers(ofFolderAt: folder)
+        guard let provider = providers.first else { return .failure(.notAProfile) }
+        guard providers.count == 1 else { return .failure(.both) }
+        let id = Account.id(provider: provider, folder: folder)
+        if accountsStore.accounts.contains(where: { $0.id == id && $0.monitored }) { return .failure(.listed) }
+        if let forgotten = forgottenStore.forgotten(provider: provider, folder: folder) {
+            forgottenStore.restore(forgotten)
+            try? forgottenStore.save()
+        }
+        let alias = (folder as NSString).lastPathComponent
+        add(DiscoveredProfile(provider: provider, folder: folder, suggestedAlias: alias))
+        added.insert(id)
+        return account(id: id).map { .success($0) } ?? .failure(.notAProfile)
+    }
+
+    /// `.home` for the home folder, `.aboveHome` for one that holds it, each compared with links resolved; nil otherwise.
+    nonisolated static func homeProblem(_ folder: String, home: String) -> AddFolderProblem? {
+        let picked = URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.path
+        let home = URL(fileURLWithPath: home).resolvingSymlinksInPath().standardizedFileURL.path
+        if picked == home { return .home }
+        return picked == "/" || home.hasPrefix(picked + "/") ? .aboveHome : nil
     }
 
     /// Remove account (P362): the login leaves the app. Every folder of its provider that holds it, switched on or off, is

@@ -71,6 +71,9 @@ final class AppSettings {
         static let globalJumpEnabled = "ji.shortcuts.globalJumpEnabled"
         static let globalJumpKey = "ji.shortcuts.globalJumpKey"
         static let globalKeyAction = "ji.shortcuts.globalKeyAction"
+        static let shortcutsEnabled = "ji.shortcuts.enabled"
+        static let shortcutModifier = "ji.shortcuts.modifier"
+        static let recordedCardKeys = "ji.shortcuts.cardKeys"
         static let panelShowOnDesktop = "ji.panel.showOnDesktop"
         static let panelLocked = "ji.panel.locked"
         static let panelDisplay = "ji.panel.display"
@@ -88,6 +91,15 @@ final class AppSettings {
         static let glassLook = "ji.island.glassLook"
         static let prepareUpdates = "ji.update.prepare"
         static let whatsNewShown = "ji.update.whatsNewShown"
+        static let installAutomatically = "ji.update.installAutomatically"
+        static let welcomeSeen = "ji.welcome.seen"
+        static let loginItemAwaitsChoice = "ji.general.loginItemAwaitsChoice"
+        static let agentsKnown = "ji.agents.known"
+        static let newAgents = "ji.agents.new"
+        // Wave 3, lane ALERTS (P1000 to P1024).
+        static let quietWhilePresenting = "ji.island.quietWhilePresenting"
+        static let rowShowsModel = "ji.island.rowShowsModel"
+        static let rowShowsBranch = "ji.island.rowShowsBranch"
     }
 
     /// Diagnostics › Motion › Outline until the owner picks (`IslandOutline`): Core Animation, as every fail-closed check
@@ -98,6 +110,8 @@ final class AppSettings {
     static let defaultNeedsYouSound = SoundChoice.system("Glass")
 
     @ObservationIgnored private let defaults: UserDefaults?
+    /// This app ran here before this launch (`hasEarlierLaunch`), read as the settings load, before anything is written.
+    @ObservationIgnored let hadEarlierLaunch: Bool
 
     // MARK: General
     var showAs: ShowAs { didSet { save(showAs.rawValue, Key.showAs) } }
@@ -169,7 +183,8 @@ final class AppSettings {
     var answerSubagentsOnIsland: Bool { didSet { save(answerSubagentsOnIsland, Key.answerSubagents) } }
     /// A Codex shell command or patch is held for the island while its card shows, at most `CodexHold.limit`, so the
     /// island's Yes and No answer it; Codex's own prompt waits that long, and never while the owner looks at its tab or an
-    /// auto reviewer takes it (P470). Off: every Codex card is read-only (decision 15). Island mode only.
+    /// auto reviewer takes it (P470). Off: every Codex card is read-only (decision 15). In Window mode the window's Needs
+    /// you card holds it the same way (P1050).
     var answerCodexOnIsland: Bool { didSet { save(answerCodexOnIsland, Key.answerCodex) } }
     /// A row the pointer rests on shows its last prompt, its reply and, in Clean, its model, mode and progress in the
     /// island (P311). On.
@@ -178,7 +193,8 @@ final class AppSettings {
     var stalledAfter: StallLimit { didSet { save(stalledAfter.rawValue, Key.stalledAfter) } }
     /// A session done or idle this long is archived on its own, as its Archive would (`AutoTidy`, P727). 3 days.
     var archiveIdleAfter: ArchiveAfter { didSet { save(archiveIdleAfter.rawValue, Key.archiveIdleAfter) } }
-    /// nil: the display with the notch (or the main display when none has one). Otherwise a display UUID string.
+    /// nil: Automatic, the display with the notch (or the main display when none has one). "follow-focus": the screen with
+    /// the active window. Otherwise a display UUID string (`IslandDisplayChoice`).
     var islandDisplay: String? { didSet { save(islandDisplay, Key.islandDisplay) } }
     var hapticOnHover: Bool { didSet { save(hapticOnHover, Key.hapticOnHover) } }
     /// P125: a brief island notice when an account crosses 90 % of a window, will run out within 30 minutes, or is back.
@@ -232,6 +248,15 @@ final class AppSettings {
     var globalJumpKey: String? { didSet { save(globalJumpKey, Key.globalJumpKey) } }
     /// What that key does: Jump to what needs you (default) or Open Juice Island with the keys (P323).
     var globalKeyAction: GlobalKeyAction { didSet { save(globalKeyAction.rawValue, Key.globalKeyAction) } }
+    /// Keyboard shortcuts (P1030): off, Juice takes no card key, jump key, U or system-wide key; arrows, Return, Esc and
+    /// the ⌘ keys still work. On.
+    var shortcutsEnabled: Bool { didSet { save(shortcutsEnabled, Key.shortcutsEnabled) } }
+    /// The card keys' one modifier (P1025): Control, as ever, or Option.
+    var shortcutModifier: ShortcutModifier { didSet { save(shortcutModifier.rawValue, Key.shortcutModifier) } }
+    /// The card keys the owner recorded in place of the standard ones (P1026); Reset takes one out. None.
+    var recordedCardKeys: [CardKeyAction: CardKey] { didSet { save(CardKeys.encode(recordedCardKeys), Key.recordedCardKeys) } }
+    /// The three together, as the routers and the buttons read them (`CardKeys(_:)`).
+    var cardKeys: CardKeys { CardKeys(self) }
 
     // MARK: Desktop panel
     var panelShowOnDesktop: Bool { didSet { save(panelShowOnDesktop, Key.panelShowOnDesktop) } }
@@ -297,9 +322,41 @@ final class AppSettings {
     var prepareUpdates: Bool { didSet { save(prepareUpdates, Key.prepareUpdates) } }
     /// The build whose What's new card showed (P716): it shows on that build's first launch only.
     var whatsNewShown: String? { didSet { save(whatsNewShown, Key.whatsNewShown) } }
+    /// Settings › About › Install automatically (P1070). Off. The private app restarts into a build prepared in the
+    /// background at a quiet moment (`AutoInstall`); the public flavor lets Sparkle download in the background and
+    /// install when the app quits.
+    var installAutomatically: Bool { didSet { save(installAutomatically, Key.installAutomatically) } }
 
-    init(defaults: UserDefaults? = .standard, identity: AppIdentity = .current) {
+    // MARK: First run (P950 to P974)
+    /// Set at the first launch, whether the welcome showed or not: from then on it shows only when asked (Settings ›
+    /// About › Show welcome, P951).
+    var welcomeSeen: Bool { didSet { save(welcomeSeen, Key.welcomeSeen) } }
+    /// The welcome's Pick a look shows Launch at Login, and macOS registers it only as the owner leaves that screen
+    /// (P962): until then no launch registers it, whatever `launchAtLogin` says. Cleared by that screen or the switch.
+    var loginItemAwaitsChoice: Bool { didSet { save(loginItemAwaitsChoice, Key.loginItemAwaitsChoice) } }
+    /// The agents the last launch's build could connect (`NewAgents`, P966); nil before any build recorded them.
+    var agentsKnown: [String]? { didSet { save(agentsKnown?.joined(separator: ","), Key.agentsKnown) } }
+    /// Agents an update made connectable, to name once on the island ("2 new agents can connect"); cleared by its
+    /// Connect or ✕.
+    var newAgents: [String] { didSet { save(newAgents.isEmpty ? nil : newAgents.joined(separator: ","), Key.newAgents) } }
+
+    // MARK: Alerts (wave 3, P1000 to P1024)
+    /// Settings › Island › Quiet › Quiet while presenting (`QuietScenes`, P1005): while a display mirrors another (a
+    /// projector, a TV over AirPlay), no sounds and nothing opens the island by itself, as in Quiet hours. Off.
+    var quietWhilePresenting: Bool { didSet { save(quietWhilePresenting, Key.quietWhilePresenting) } }
+    /// Settings › Island › Sessions › Show model, under Clean (P1015): a Clean row and its card's header say the model
+    /// (and its effort) at the end of their second line, and its peek no longer does. Off: only the peek says it, as
+    /// before. Detailed rows always say it.
+    var rowShowsModel: Bool { didSet { save(rowShowsModel, Key.rowShowsModel) } }
+    /// Settings › Island › Sessions › Show branch, under Clean (P1015): the same for the branch (P434). Off.
+    var rowShowsBranch: Bool { didSet { save(rowShowsBranch, Key.rowShowsBranch) } }
+
+    /// `domain`: the defaults' own name, where an earlier launch's settings are looked for (the app's bundle id; a test's
+    /// suite).
+    init(defaults: UserDefaults? = .standard, identity: AppIdentity = .current, domain: String? = Bundle.main.bundleIdentifier,
+         flavor: AppFlavor = .current) {
         self.defaults = defaults
+        hadEarlierLaunch = Self.hasEarlierLaunch(defaults, domain: domain)
         func bool(_ key: String, _ fallback: Bool) -> Bool { defaults?.object(forKey: key) as? Bool ?? fallback }
         func int(_ key: String, _ fallback: Int) -> Int { defaults?.object(forKey: key) as? Int ?? fallback }
         func string(_ key: String) -> String? { defaults?.string(forKey: key) }
@@ -344,10 +401,13 @@ final class AppSettings {
         sessionPeek = bool(Key.sessionPeek, true)
         stalledAfter = choice(Key.stalledAfter, StallLimit.tenMinutes)
         archiveIdleAfter = choice(Key.archiveIdleAfter, ArchiveAfter.threeDays)
-        islandDisplay = string(Key.islandDisplay)
+        islandDisplay = IslandDisplayChoice.reading(string(Key.islandDisplay))
         hapticOnHover = bool(Key.hapticOnHover, false)
         quotaAlerts = bool(Key.quotaAlerts, true)
-        islandMotion = choice(Key.islandMotion, MotionFeel.refined)
+        // The motion A/B knobs (Island › Motion, Diagnostics › Motion) are the private app's alone: the public flavor runs
+        // on their defaults, whatever an earlier build stored (P1060).
+        let abKnobs = !flavor.isPublic
+        islandMotion = abKnobs ? choice(Key.islandMotion, MotionFeel.refined) : .refined
         islandHover = choice(Key.islandHover, HoverFeel.quick)
         islandWidth = IslandSize.snapped(int(Key.islandWidth, Int(IslandSize.standard.outer)), to: IslandSize.widths)
         islandTextSize = IslandSize.snapped(int(Key.islandTextSize, Int(IslandSize.standard.text)), to: IslandSize.textSizes)
@@ -361,13 +421,16 @@ final class AppSettings {
         muteRules = MuteRules.decode(string(Key.muteRules))
         snoozedUntil = defaults?.object(forKey: Key.snoozedUntil) as? Date
         soundsMuted = bool(Key.soundsMuted, false)
-        needsYouSound = string(Key.needsYouSound).map(SoundChoice.init(storageValue:)) ?? Self.defaultNeedsYouSound
-        doneSound = string(Key.doneSound).map(SoundChoice.init(storageValue:)) ?? .none
-        questionSound = string(Key.questionSound).map(SoundChoice.init(storageValue:))
+        needsYouSound = string(Key.needsYouSound).flatMap(SoundChoice.init(stored:)) ?? Self.defaultNeedsYouSound
+        doneSound = string(Key.doneSound).flatMap(SoundChoice.init(stored:)) ?? .none
+        questionSound = string(Key.questionSound).flatMap(SoundChoice.init(stored:))
         soundVolume = SignalSounds.stored(defaults?.object(forKey: Key.soundVolume) as? Double ?? 1)
         globalJumpEnabled = bool(Key.globalJumpEnabled, false)
         globalJumpKey = string(Key.globalJumpKey)
         globalKeyAction = choice(Key.globalKeyAction, GlobalKeyAction.jump)
+        shortcutsEnabled = bool(Key.shortcutsEnabled, true)
+        shortcutModifier = choice(Key.shortcutModifier, ShortcutModifier.control)
+        recordedCardKeys = CardKeys.decode(defaults?.dictionary(forKey: Key.recordedCardKeys))
         panelShowOnDesktop = bool(Key.panelShowOnDesktop, true)
         panelLocked = bool(Key.panelLocked, true)
         panelDisplay = string(Key.panelDisplay)
@@ -377,15 +440,32 @@ final class AppSettings {
         runwayRedHours = int(Key.runwayRedHours, 24)
         money = MoneySettings(defaults: defaults)
         usageSource = choice(Key.usageSource, defaults == nil ? UsageSource.demo : .juiceReadings)
-        recordIslandMotion = bool(Key.recordIslandMotion, false)
-        paceIslandMotion = bool(Key.paceIslandMotion, false)
-        islandOutline = choice(Key.islandOutline, AppSettings.defaultOutline)
+        recordIslandMotion = abKnobs && bool(Key.recordIslandMotion, false)
+        paceIslandMotion = abKnobs && bool(Key.paceIslandMotion, false)
+        islandOutline = abKnobs ? choice(Key.islandOutline, AppSettings.defaultOutline) : AppSettings.defaultOutline
         juiceTheme = JuiceTheme(stored: string(Key.juiceTheme))
         islandStateTint = bool(Key.islandStateTint, true)
         glassFrost = GlassFrost.stored(defaults?.object(forKey: Key.glassFrost) as? Double ?? 0)
         glassLook = choice(Key.glassLook, GlassLookChoice.widget)
         prepareUpdates = bool(Key.prepareUpdates, true)
         whatsNewShown = string(Key.whatsNewShown)
+        installAutomatically = bool(Key.installAutomatically, false)
+        welcomeSeen = bool(Key.welcomeSeen, false)
+        loginItemAwaitsChoice = bool(Key.loginItemAwaitsChoice, false)
+        agentsKnown = string(Key.agentsKnown).map { $0.split(separator: ",").map(String.init) }
+        newAgents = string(Key.newAgents).map { $0.split(separator: ",").map(String.init) } ?? []
+        quietWhilePresenting = bool(Key.quietWhilePresenting, false)
+        rowShowsModel = bool(Key.rowShowsModel, false)
+        rowShowsBranch = bool(Key.rowShowsBranch, false)
+    }
+
+    /// Whether this app ran here before: the welcome's mark, or any setting of ours in the app's defaults (an owner who
+    /// updated from a build before the welcome has many). A brand-new Mac has none (P950).
+    static func hasEarlierLaunch(_ defaults: UserDefaults?, domain: String? = Bundle.main.bundleIdentifier) -> Bool {
+        guard let defaults else { return false }
+        if defaults.bool(forKey: Key.welcomeSeen) { return true }
+        guard let domain, let stored = defaults.persistentDomain(forName: domain) else { return false }
+        return stored.keys.contains { $0.hasPrefix("ji.") }
     }
 
     /// Defaults only, kept in memory: for renders, previews and tests. Nothing is read or written.

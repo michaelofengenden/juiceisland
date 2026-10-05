@@ -65,11 +65,12 @@ struct QuietHours: Equatable, Sendable {
 /// and nothing opens the island by itself. Quiet hours: no sounds, and nothing opens the island by itself; the pill still
 /// shows "!", "?" and the rest. Quiet while locked: while the screen is locked or the owner's session switched out
 /// (`ScreenLockWatch`), no sounds and nothing opens the island by itself; back, the island opens on what came meanwhile
-/// (`LockCatchUp`). Either way a hover or a click opens it as ever, where the pill shows. Follow Focus is not built: macOS
-/// exposes Focus to an app only through `INFocusStatusCenter`, which needs the restricted Communication Notifications
-/// entitlement and a provisioning profile, which this app's signing has not (P333). Screen sharing and recording are not
-/// heard either: no public macOS API tells an app that another one captures the screen (P424). A snooze (`Snooze`, P724)
-/// quiets as Quiet hours do, until its end.
+/// (`LockCatchUp`). Either way a hover or a click opens it as ever, where the pill shows. Quiet while presenting and a
+/// Focus (`QuietScenes`, P1005, P1006) quiet as Quiet hours do, while the screen is mirrored or a Focus with the app's
+/// filter is on. A Focus is heard only through that filter: `INFocusStatusCenter` needs the restricted Communication
+/// Notifications entitlement and a provisioning profile, which this app's signing has not (P333). Screen sharing and
+/// recording are not heard: no public macOS API tells an app that another one captures the screen (P424, P1004). A
+/// snooze (`Snooze`, P724) quiets as Quiet hours do, until its end.
 enum QuietMode {
     /// Quiet hours are on and `now` falls in them.
     @MainActor static func inQuietHours(_ settings: AppSettings, now: Date, calendar: Calendar = .current) -> Bool {
@@ -86,13 +87,19 @@ enum QuietMode {
         away && settings.quietWhileLocked
     }
 
+    /// The screen is mirrored with Quiet while presenting on, or a Focus with the app's filter on says Quiet
+    /// (`QuietScenes`, P1005, P1006).
+    @MainActor static func sceneQuiets(_ settings: AppSettings, scene: QuietScene) -> Bool {
+        (scene.mirrored && settings.quietWhilePresenting) || scene.focus
+    }
+
     /// Nothing opens the island by itself: a card that needs you, a finish's Done card, a quota notice. `fullScreen`: the
     /// frontmost app is in full screen on the island's display; `away`: the screen is locked or the owner's session
-    /// switched out. A snooze holds it too (P724).
-    @MainActor static func holdsAttention(_ settings: AppSettings, fullScreen: Bool, away: Bool = false, now: Date,
-                                          calendar: Calendar = .current) -> Bool {
-        (fullScreen && settings.hideInFullScreen) || lockQuiets(settings, away: away) || inQuietHours(settings, now: now, calendar: calendar)
-            || snoozed(settings, now: now)
+    /// switched out; `scene`: the screen is mirrored or a Focus quiets. A snooze holds it too (P724).
+    @MainActor static func holdsAttention(_ settings: AppSettings, fullScreen: Bool, away: Bool = false, scene: QuietScene = .none,
+                                          now: Date, calendar: Calendar = .current) -> Bool {
+        (fullScreen && settings.hideInFullScreen) || lockQuiets(settings, away: away) || sceneQuiets(settings, scene: scene)
+            || inQuietHours(settings, now: now, calendar: calendar) || snoozed(settings, now: now)
     }
 
     /// One batch of signals as the island hears it.

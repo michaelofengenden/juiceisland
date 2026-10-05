@@ -144,6 +144,28 @@ struct SessionEngineTests {
         #expect(await engine.jumpToNextNeedsYou() == nil)
     }
 
+    /// Copilot CLI and Devin (as CodeBuddy's) and Qwen Code wait on the bridge with no prompt of their own: their
+    /// approval sounds whatever tab is in front. A Claude approval shows Claude's own prompt too, and stays quiet (P931).
+    @Test
+    func anApprovalTheAgentWaitsOnAloneSoundsWhileItsTabIsInFront() async throws {
+        let engine = F.engine(frontmost: true, suppress: true)
+        var signals: [EngineSignal] = []
+        engine.onSignal = { signals.append($0) }
+        for (id, tool) in [("cp-1", AgentTool.codebuddy), ("qw-1", .qwenCode)] {
+            engine.ingest(F.started(id, tool: tool), ingress: .bridge)
+            engine.ingest(F.permission(id), ingress: .bridge)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(signals == [.needsYou(sessionID: "cp-1"), .needsYou(sessionID: "qw-1")])
+        #expect(engine.attentionHead(for: "cp-1")?.waitsOnIslandAlone == true)
+        engine.ingest(F.started("s1"), ingress: .bridge)
+        engine.ingest(F.permission("s1"), ingress: .bridge)
+        engine.passAttentionWindows()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!signals.contains(.needsYou(sessionID: "s1")))
+        #expect(engine.attentionHead(for: "s1")?.waitsOnIslandAlone == false)
+    }
+
     /// No alerts for focused sessions is the owner's switch: the app turns it off and on while the engine runs.
     @Test
     func theFocusSwitchTakesEffectWhileTheEngineRuns() async throws {

@@ -143,6 +143,14 @@ public struct AttentionRequest: Identifiable, Equatable, Sendable {
     /// A Codex request upstream's helper holds for the bridge: Codex waits on it and shows nothing, so no engine
     /// rule may hide or close it; only the bridge's own ends do (invariant 6, C4, P166).
     public var isHeldCodexLegacy: Bool { tool == .codex && channel == .answer(.bridge) }
+    /// An approval the agent waits on with no prompt of its own while the island holds it: Codex behind the old helper,
+    /// and the Claude-format agents the helper answers itself on the bridge, Copilot CLI and Devin (as CodeBuddy's) and
+    /// Qwen Code. Copilot shows its own prompt only once the hook gives up, an hour later. Neither No alerts for focused
+    /// sessions nor a mute rule keeps it quiet (P931).
+    public var waitsOnIslandAlone: Bool {
+        guard channel == .answer(.bridge), permissionRequest != nil else { return false }
+        return tool == .codex || tool == .codebuddy || tool == .qwenCode
+    }
 
     /// Upstream's request, for an approval or a plan.
     public var permissionRequest: PermissionRequest? {

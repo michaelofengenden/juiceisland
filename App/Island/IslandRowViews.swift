@@ -113,10 +113,17 @@ struct CleanSessionRow: View {
         RowTitleLine(row: row, size: size.text(12), markSize: Theme.Mark.sessionRow, showsProject: false)
     }
 
-    /// Line 2, its compaction's time moving while it compacts (P433).
+    /// Line 2, its compaction's time moving while it compacts (P433); at its end the branch and the model when Show
+    /// branch and Show model are on (P1015), the line cut first, then the branch, its state word never (P1078).
     private var status: some View {
-        CompactionClock(since: row.status == .compacting ? row.compactingSince : nil) { now in
-            statusLine(IslandRowText.status(row, now: now))
+        let shown = CleanRowShown(row, settings: env.settings)
+        return HStack(spacing: 12) {
+            CompactionClock(since: row.status == .compacting ? row.compactingSince : nil) { now in
+                statusLine(IslandRowText.status(row, now: now))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .keepsWhole(shown.isEmpty ? nil : IslandRowText.status(row).word, font: Fonts.sys(size.text(11)))
+            if !shown.isEmpty { CleanRowTags(shown: shown).layoutPriority(1) }
         }
     }
 
@@ -330,6 +337,50 @@ struct DetailedSessionRow: View {
                 .frame(minWidth: size.scaled(IslandTheme.Metrics.tagAgeWidth, for: 9.5), alignment: .trailing)
         }
         .fixedSize()
+    }
+}
+
+/// What a Clean row and its Clean card's header say at the end of their second line (P1015): the branch with Show branch
+/// on, the model and its effort with Show model on, each only when the session reports it (`SessionRow.branch`,
+/// `RowFacts`: nothing is read for them). Both off, the row is as it was; its peek then says them, and otherwise leaves
+/// them to the row (`SessionPeek.leaving`).
+struct CleanRowShown: Equatable, Sendable {
+    var branch: String?
+    var model: RowFacts?
+
+    init(_ row: SessionRow, branch: Bool, model: Bool) {
+        self.branch = branch ? row.branch : nil
+        self.model = model && row.facts.model != nil ? RowFacts(model: row.facts.model, effort: row.facts.effort) : nil
+    }
+
+    @MainActor init(_ row: SessionRow, settings: AppSettings) {
+        self.init(row, branch: settings.rowShowsBranch, model: settings.rowShowsModel)
+    }
+
+    var isEmpty: Bool { branch == nil && model == nil }
+}
+
+extension View {
+    /// Never narrower than `word` and an ellipsis at `font` (nil: as it is): a Clean line's state word ("Needs
+    /// approval…") stays whole while the branch and the model beside it take the room, the rest of the line and then the
+    /// branch cut first (P1015, P1078). A hidden copy sets the width the stack keeps for it; what shows is drawn as before.
+    func keepsWhole(_ word: String?, font: Font) -> some View {
+        ZStack(alignment: .leading) {
+            if let word { Text(word + "…").font(font).lineLimit(1).fixedSize().hidden().accessibilityHidden(true) }
+            self
+        }
+    }
+}
+
+/// `CleanRowShown` as tags: the branch (which yields first, cut in its middle) and the model, in the Detailed tags' look.
+struct CleanRowTags: View {
+    let shown: CleanRowShown
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let branch = shown.branch { IslandBranchTag(branch: branch, yields: true) }
+            if let model = shown.model { RowFactTags(facts: model) }
+        }
     }
 }
 

@@ -51,6 +51,8 @@ struct UpdateProgress: Equatable, Sendable {
     var secondsLeft: Int?
     /// The build has run longer than the last such build: no percent, and the fill holds.
     var overran = false
+    /// Past the estimate on a busy Mac (`MachineLoad.isBusy`): "Still building, the Mac is busy" (P897).
+    var busy = false
     /// The run's own words, when its updater says them (the public flavor's feed: "Downloading 45%", "Extracting",
     /// P825); nil for update-app.sh's runs, whose words follow the phase.
     var words: String?
@@ -71,13 +73,15 @@ struct UpdateProgress: Equatable, Sendable {
 
     /// The progress for `phase`. `install` is a Restart to update run, `begun` once the script has written a state,
     /// `buildStarted` when this app saw `building`, and `buildFrom` the fill the build started from (a build after the
-    /// prepared app's check sweeps on from that check's share).
+    /// prepared app's check sweeps on from that check's share). `busy`: the Mac is busy, which a build past its
+    /// estimate says. Waiting for a background prepare (P895) holds the fill where the build starts.
     static func of(phase: UpdatePhase, install: Bool, begun: Bool = true, buildStarted: Date?, buildFrom: Double = fetchEnd,
-                   estimate: BuildEstimate?, now: Date) -> UpdateProgress {
+                   estimate: BuildEstimate?, busy: Bool = false, now: Date) -> UpdateProgress {
         switch phase {
         case .idle, .failed, .updated: return .none
         case .pulling: return UpdateProgress(fraction: fetching)
-        case .building: return building(started: buildStarted, from: buildFrom, estimate: estimate, now: now)
+        case .waiting, .settingUp: return UpdateProgress(fraction: fetchEnd)
+        case .building: return building(started: buildStarted, from: buildFrom, estimate: estimate, busy: busy, now: now)
         case .installing:
             guard install, buildStarted == nil else { return UpdateProgress(fraction: checking) }
             return UpdateProgress(fraction: begun ? installing : fetching)
@@ -85,13 +89,23 @@ struct UpdateProgress: Equatable, Sendable {
         }
     }
 
-    private static func building(started: Date?, from: Double, estimate: BuildEstimate?, now: Date) -> UpdateProgress {
+    private static func building(started: Date?, from: Double, estimate: BuildEstimate?, busy: Bool, now: Date) -> UpdateProgress {
         let from = min(max(from, fetchEnd), buildEnd)
         guard let started, let estimate else { return UpdateProgress(fraction: from) }
         let elapsed = max(0, now.timeIntervalSince(started)), total = Double(estimate.seconds)
         let share = elapsed / total
-        guard share < 1 else { return UpdateProgress(fraction: buildEnd, overran: true) }
+        guard share < 1 else { return UpdateProgress(fraction: buildEnd, overran: true, busy: busy) }
         return UpdateProgress(fraction: from + (buildEnd - from) * share, buildPercent: Int(share * 100),
                               secondsLeft: Int((total - elapsed).rounded(.up)))
+    }
+}
+
+/// Whether the Mac is busy (P897): its load over the last minute is at least the number of its cores, so every build
+/// runs slow. Only then does a build past its estimate say "the Mac is busy"; otherwise it says it takes longer.
+enum MachineLoad {
+    static func isBusy() -> Bool {
+        var load = [0.0]
+        guard getloadavg(&load, 1) == 1 else { return false }
+        return load[0] >= Double(ProcessInfo.processInfo.activeProcessorCount)
     }
 }

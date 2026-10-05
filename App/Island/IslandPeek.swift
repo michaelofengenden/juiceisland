@@ -54,7 +54,10 @@ final class IslandPeeker {
         task = Task { @MainActor [weak self] in
             try? await Task.sleep(for: wait)
             guard !Task.isCancelled, let self else { return }
-            let peek = await self.sessions().peek(id, clean: self.settings.islandStyle == .clean)
+            let clean = self.settings.islandStyle == .clean
+            // What a Clean row says itself with Show model or Show branch on, its peek leaves out (P1015).
+            let peek = await self.sessions().peek(id, clean: clean)?
+                .leaving(model: clean && self.settings.rowShowsModel, branch: clean && self.settings.rowShowsBranch)
             guard !Task.isCancelled, self.pending == id else { return }
             self.pending = nil
             guard self.ui.isOpen, self.ui.presentation == .list else { return }

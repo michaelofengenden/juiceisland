@@ -265,6 +265,8 @@ struct CardActionButton: View {
     /// The answer that refuses (No, Keep planning): Glass's clear glass.
     var refuses = false
     var fills = false
+    /// Smaller (24 pt, 11.5 pt type): Allow all and Deny all, under the answers or on the window's Needs you line.
+    var compact = false
     let action: () -> Void
     @Environment(\.showsShortcutHints) private var showsHints
     @State private var hovered = false
@@ -273,15 +275,15 @@ struct CardActionButton: View {
         let shape = RoundedRectangle(cornerRadius: 7)
         Button(action: action) {
             HStack(spacing: 6) {
-                Text(title).font(Fonts.sys(12, .semibold)).lineLimit(1).truncationMode(.middle)
+                Text(title).font(Fonts.sys(compact ? 11.5 : 12, .semibold)).lineLimit(1).truncationMode(.middle)
                 if showsHints, let key {
                     Text(key).font(Fonts.sys(10.5)).foregroundStyle(primary ? palette.kbdOnPrimary : palette.cardKbd).fixedSize()
                 }
             }
             .foregroundStyle(primary ? palette.primaryText : palette.ink)
-            .padding(.horizontal, fills ? 6 : 12)
+            .padding(.horizontal, fills ? 6 : compact ? 10 : 12)
             .frame(maxWidth: fills ? .infinity : nil)
-            .frame(height: 28)
+            .frame(height: compact ? 24 : 28)
             .cardControlGround(shape, fill: background, glassFill: glassFill, key: primary)
             .contentShape(shape)
         }

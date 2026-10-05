@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The toolbar's Update control (`UpdateControl`), just left of the gear: only while an update is offered, runs or
 /// failed, or once after one. It is the run's progress (P803): "Update" (or "Restart to update" once a background
-/// prepare has it built, P711), then the fill with "Fetching", "Building 63%", "Installing", then "Updated" with a check
+/// prepare has it built, P711), then the fill with "Fetching", "Waiting for build" (a background prepare holds the
+/// update lock, P895), "Building 63%" or "Still building", "Installing", then "Updated" with a check
 /// and the glow before the relaunch; "Update failed" with Retry; "Updated" once after the relaunch. A run, or the note
 /// after one, opens Settings › About on a click, where the time left, the reason and the log, and What's new are.
 struct UpdateToolbarButton: View {
@@ -12,7 +13,8 @@ struct UpdateToolbarButton: View {
 /// Settings › About's Updates section: when it was checked and Check now (the build itself is named under the app's
 /// name); an offered update ("12 changes", its list behind a disclosure that stays shut until the owner opens it, or
 /// "Not built from origin/main") with the Update control (P803), "Preparing…" beside it while a background prepare builds
-/// it; while the build runs, the time the estimate leaves under the changes (P802); after a failure, the reason in plain
+/// it; while the build runs, the time the estimate leaves under the changes (P802), or past it why it takes longer
+/// (P897), and while the run waits for a background prepare, that step in full (P898); after a failure, the reason in plain
 /// words with Show Log under it (P809); "Updated" once after one, or this build's What's new behind its own disclosure
 /// (P716) in its place; and the Prepare updates in the background switch. The public flavor's feed (P823, P824) has the
 /// same rows but no log of ours and no prepare (the feed downloads on the click), and a public build made without the
@@ -52,7 +54,7 @@ struct AboutUpdatesSection: View {
             let info = checker.available
             let list = info.map { !$0.subjects.isEmpty } ?? false
             OfferRow(label: Self.offerLabel(info),
-                     subtitle: phase == .building ? UpdateText.timeLeft(controller.progress) : nil,
+                     subtitle: UpdateText.detail(phase, progress: controller.progress),
                      expanded: list ? checker.showsChanges : nil, toggle: { checker.showsChanges.toggle() }) {
                 HStack(spacing: 10) {
                     if controller.preparing, case .offer = state {
@@ -83,14 +85,23 @@ struct AboutUpdatesSection: View {
             // The build line above names the commit.
             FormRow("Updated") { EmptyView() }
         }
-        // The feed downloads only on the click: nothing to prepare.
+        // The feed downloads only on the click (or by itself with Install automatically): nothing to prepare.
         if source == .git {
-            FormRow("Prepare updates in the background", subtitle: "On power only. Installing waits for your click.") {
+            FormRow("Prepare updates in the background", subtitle: UpdateText.prepare(installsAutomatically: settings.installAutomatically)) {
                 SettingsSwitch(isOn: Binding(get: { settings.prepareUpdates }, set: {
-                    settings.prepareUpdates = $0
+                    UpdateSwitches.setPrepare($0, settings: settings)
                     controller.prepareSettingChanged()
                 }), label: "Prepare updates in the background")
             }
+        }
+        // Off by default: the private app restarts into a prepared build at a quiet moment, the public flavor's feed
+        // installs at quit (P1070, P1074).
+        FormRow("Install automatically", subtitle: UpdateText.installAutomatically(feed: source == .feed,
+                                                                                   installsOnQuit: checker.installsOnQuit)) {
+            SettingsSwitch(isOn: Binding(get: { settings.installAutomatically }, set: {
+                UpdateSwitches.setInstallAutomatically($0, settings: settings, git: source == .git)
+                if $0, source == .git { controller.prepareSettingChanged() }
+            }), label: "Install automatically")
         }
     }
 
@@ -170,5 +181,21 @@ private struct ChangeList: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(EdgeInsets(top: 9, leading: 12, bottom: 10, trailing: 12))
+    }
+}
+
+/// About's two update switches, kept together (P1070): the private app installs by itself only a build prepared ahead,
+/// so Install automatically turns Prepare on, and Prepare off turns Install automatically off. The public flavor's feed
+/// has no Prepare.
+@MainActor
+enum UpdateSwitches {
+    static func setPrepare(_ on: Bool, settings: AppSettings) {
+        settings.prepareUpdates = on
+        if !on { settings.installAutomatically = false }
+    }
+
+    static func setInstallAutomatically(_ on: Bool, settings: AppSettings, git: Bool) {
+        settings.installAutomatically = on
+        if on, git { settings.prepareUpdates = true }
     }
 }

@@ -41,6 +41,8 @@ struct HooksSetupUITests {
 
     private final class Probe: @unchecked Sendable {
         var otherIsland = false
+        /// The bridge's scratch path stands in for Open Island's own socket.
+        var sharedSocket = false
         var ownedSockets = false
         var binds = 0
     }
@@ -51,6 +53,7 @@ struct HooksSetupUITests {
             var configuration = SessionEngine.Configuration.headless
             configuration.startBridge = true
             configuration.socketURL = URL(fileURLWithPath: "/tmp/juice-island-test-\(UUID().uuidString).sock")
+            if probe.sharedSocket { configuration.openIslandSocketURL = configuration.socketURL }
             var dependencies = SessionEngine.Dependencies()
             dependencies.isOtherIslandRunning = { probe.otherIsland }
             dependencies.socketHasOwner = { _ in probe.ownedSockets }
@@ -93,6 +96,14 @@ struct HooksSetupUITests {
     func theProductionAppKeepsTheSwitchOnWhileOpenIslandRunsAndTriesAgain() {
         let probe = Probe()
         probe.otherIsland = true
+        // The app's own socket (P900): live beside Open Island.
+        let own = makeLive(probe, identity: .production, settings: AppSettings(defaults: nil, identity: .production))
+        own.apply()
+        #expect(own.mode == .live && own.badge == nil && probe.binds == 1)
+        probe.binds = 0
+
+        // A bridge on Open Island's own socket keeps the switch on and tries again.
+        probe.sharedSocket = true
         let settings = AppSettings(defaults: nil, identity: .production)
         #expect(settings.liveSessions)
         let live = makeLive(probe, identity: .production, settings: settings)
@@ -475,17 +486,16 @@ struct HooksSetupUITests {
         #expect(try Data(contentsOf: box.managed) == Data(contentsOf: box.helper))
         #expect(box.snapshot().filter { !$0.key.hasPrefix("support/") && !$0.key.hasPrefix("App.app/") } == configs)
 
-        // With Open Island running, the click is refused and nothing changes.
+        // Open Island running holds the click back no more: the helper is Juice's own (P900).
         try Data("#!/bin/sh\n# newest\nexit 0\n".utf8).write(to: box.helper)
         let running = box.hooks(openIslandRunning: true)
         running.activate()
         await settle(running) { running.rows.count == 6 && running.rows.allSatisfy { $0.word != "…" } }
-        #expect(running.helperUpdate == nil)
-        await running.run(.install, on: try #require(running.directory.targets.first { $0.id == work.id }))
+        await running.check(running.directory.targets, .wake)
+        #expect(running.helperUpdate == .available)
         running.updateHelper()
-        await settle(running) { if case .refused = running.helperUpdate { true } else { false } }
-        #expect(running.helperUpdate == .refused("Quit Open Island first"))
-        #expect(try Data(contentsOf: box.managed) != Data(contentsOf: box.helper))
+        await settle(running) { running.helperUpdate == nil }
+        #expect(try Data(contentsOf: box.managed) == Data(contentsOf: box.helper))
     }
 
     /// After a successful Update click the line reads "…" until every profile is read again, then goes: Update never
@@ -602,13 +612,13 @@ struct HooksSetupUITests {
     }
 
     @Test
-    func whileOpenIslandRunsOrWithoutAHelperTheButtonsWait() async throws {
+    func openIslandRunningHoldsNoButtonBackButNoHelperDoes() async throws {
+        // Juice's hooks name its own helper (P900): Open Island running stops no click.
         let running = try Sandbox()
         let hooks = running.hooks(openIslandRunning: true)
         hooks.activate()
         await settle(hooks) { hooks.rows.count == 6 && hooks.rows.allSatisfy { $0.word != "…" } }
-        #expect(hooks.rows.allSatisfy { $0.refusal == "Quit Open Island first" && !$0.canClick })
-        #expect(hooks.installableMonitoredRows.isEmpty)
+        #expect(hooks.rows.allSatisfy { $0.refusal == nil && $0.canClick })
 
         let bare = try Sandbox(helper: false)
         let noHelper = bare.hooks()

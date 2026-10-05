@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IslandHookNotes
 import JuiceCore
 import OpenIslandCore
 
@@ -20,16 +21,22 @@ public enum OpenCodePluginError: Error, Equatable, Sendable {
     }
 }
 
-/// Juice Island's OpenCode plugin in OpenCode's config folder (`~/.config/opencode/plugins/open-island.js`, where
-/// Open Island puts its own). Reads with `lstat` and one bounded read; writes only on a click in Setup (Install, Update,
-/// Remove), never by itself, and never a file that is not an island plugin or is a link.
+/// Juice's OpenCode plugin in OpenCode's config folder, in a file of its own named per flavor
+/// (`~/.config/opencode/plugins/juice-island.js`, `juice.js`), beside Open Island's `open-island.js` (P934). Juice wrote
+/// revisions 1 and 2 under Open Island's name: while its own file is missing, Juice's plugin there reads as an older one
+/// of Juice's, and Update moves it into Juice's own file; Open Island's own plugin there is never touched. Reads with
+/// `lstat` and one bounded read; writes only on a click in Settings › Agents (Install, Update, Remove), never by itself,
+/// and never a file that is not Juice's plugin or is a link.
 public struct OpenCodePluginInstaller: Sendable {
     public let configDirectory: URL
+    /// Juice's own file name, without `.js` (`HookHome.ownFileStem`).
+    public let fileStem: String
     /// A plugin file is a few kilobytes; anything much larger is not one.
     static let readLimit = 1_048_576
 
-    public init(configDirectory: URL = OpenCodePluginInstaller.defaultConfigDirectory()) {
+    public init(configDirectory: URL = OpenCodePluginInstaller.defaultConfigDirectory(), fileStem: String = HookHome.ownFileStem) {
         self.configDirectory = configDirectory
+        self.fileStem = fileStem
     }
 
     /// OpenCode's global config folder, as both versions resolve it with no `XDG_CONFIG_HOME` set (the app is started
@@ -39,7 +46,12 @@ public struct OpenCodePluginInstaller: Sendable {
     }
 
     public var pluginURL: URL {
-        configDirectory.appendingPathComponent("plugins", isDirectory: true).appendingPathComponent(OpenCodePlugin.fileName)
+        configDirectory.appendingPathComponent("plugins", isDirectory: true).appendingPathComponent("\(fileStem).js")
+    }
+
+    /// Open Island's file name, where Juice's revisions 1 and 2 were written.
+    public var legacyURL: URL {
+        configDirectory.appendingPathComponent("plugins", isDirectory: true).appendingPathComponent(OpenCodePlugin.legacyFileName)
     }
 
     /// OpenCode has run on this Mac (it made its config folder), or a plugin file is there.
@@ -48,29 +60,42 @@ public struct OpenCodePluginInstaller: Sendable {
         return FileManager.default.fileExists(atPath: configDirectory.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    /// What the plugin path holds. Never follows a link.
+    /// Juice's plugin as the row shows it: Juice's own file; while that is missing, Juice's older plugin under Open
+    /// Island's name (an `.ours` there; Open Island's own plugin or anything else there reads as missing, Juice's to
+    /// leave alone). Never follows a link.
     public func readFile() -> OpenCodePluginFile {
+        let own = Self.read(pluginURL)
+        guard own == .missing else { return own }
+        if case .ours = readLegacyFile() { return readLegacyFile() }
+        return .missing
+    }
+
+    /// What Open Island's file name holds.
+    public func readLegacyFile() -> OpenCodePluginFile { Self.read(legacyURL) }
+
+    static func read(_ url: URL) -> OpenCodePluginFile {
         var info = stat()
-        guard lstat(pluginURL.path, &info) == 0 else { return errno == ENOENT ? .missing : .unreadable }
+        guard lstat(url.path, &info) == 0 else { return errno == ENOENT ? .missing : .unreadable }
         switch info.st_mode & S_IFMT {
         case S_IFLNK: return .linked
         case S_IFREG: break
         default: return .unreadable
         }
-        guard info.st_size <= off_t(Self.readLimit), let handle = FileHandle(forReadingAtPath: pluginURL.path) else { return .unreadable }
+        guard info.st_size <= off_t(Self.readLimit), let handle = FileHandle(forReadingAtPath: url.path) else { return .unreadable }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: Self.readLimit) else { return .unreadable }
         return .of(contents: data)
     }
 
     /// Install or Update: writes this build's plugin beside the old file and renames it over, so OpenCode reads one
-    /// whole file or the other. Refused for another plugin's file, a link or an unreadable file. No config file is
-    /// written: both OpenCode versions load the folder's files by themselves.
+    /// whole file or the other; then Juice's older plugin under Open Island's name goes, so OpenCode never loads two.
+    /// Refused for another plugin's file, a link or an unreadable file. No config file is written: both OpenCode
+    /// versions load the folder's files by themselves.
     public func install(data: Data = OpenCodePlugin.data) throws {
-        try refuseUnlessReplaceable(readFile())
+        try refuseUnlessReplaceable(Self.read(pluginURL))
         let fileManager = FileManager.default
         let folder = pluginURL.deletingLastPathComponent()
-        let staging = folder.appendingPathComponent(".\(OpenCodePlugin.fileName).juice-island-new")
+        let staging = folder.appendingPathComponent(".\(fileStem).js.juice-island-new")
         do {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
             try? fileManager.removeItem(at: staging)
@@ -84,30 +109,34 @@ public struct OpenCodePluginInstaller: Sendable {
             try? fileManager.removeItem(at: staging)
             throw OpenCodePluginError.writeFailed("rename failed (errno \(code))")
         }
+        try removeOlderOfOurs()
     }
 
-    /// Remove: only an island plugin. Upstream's uninstaller takes the file, its `config.json` entry when Open Island
-    /// registered one (a missing file OpenCode 1 would still try to load) and its manifest; it copies `config.json` to
-    /// a backup first, of which the newest 3 are kept (`HookBackups`).
+    /// Remove: Juice's own file, and Juice's older plugin under Open Island's name; never Open Island's plugin or anyone
+    /// else's. Juice never registered its plugin in OpenCode's `config.json`, so no config file is written.
     public func remove() throws {
-        let file = readFile()
-        guard file.isIslandPlugin else {
-            if file == .missing { return }
+        let file = Self.read(pluginURL)
+        switch file {
+        case .missing: break
+        case .ours:
+            guard unlink(pluginURL.path) == 0 || errno == ENOENT else { throw OpenCodePluginError.writeFailed("unlink (errno \(errno))") }
+        default:
             try refuseUnlessReplaceable(file)
             throw OpenCodePluginError.foreign
         }
-        do {
-            try OpenCodePluginInstallationManager(openCodeConfigDirectory: configDirectory).uninstall()
-        } catch {
-            throw OpenCodePluginError.writeFailed(JuiceLog.code(error))
-        }
-        HookBackups.prune(in: configDirectory, files: ["config.json"])
+        try removeOlderOfOurs()
+    }
+
+    /// Juice's revision 1 or 2 under Open Island's file name goes; Open Island's own plugin there stays.
+    private func removeOlderOfOurs() throws {
+        guard case .ours = readLegacyFile() else { return }
+        guard unlink(legacyURL.path) == 0 || errno == ENOENT else { throw OpenCodePluginError.writeFailed("unlink (errno \(errno))") }
     }
 
     private func refuseUnlessReplaceable(_ file: OpenCodePluginFile) throws {
         switch file {
-        case .missing, .ours, .openIsland: return
-        case .foreign: throw OpenCodePluginError.foreign
+        case .missing, .ours: return
+        case .openIsland, .foreign: throw OpenCodePluginError.foreign
         case .linked: throw OpenCodePluginError.linked
         case .unreadable: throw OpenCodePluginError.unreadable
         }

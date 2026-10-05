@@ -104,7 +104,8 @@ extension View {
     /// of that adaptation for the stage's backdrop (`GlassBackdrop.adaptation`), its ink in that colour scheme. Glass look
     /// Widget draws it all in the dark scheme, face and ink (`GlassLookFace`, P870).
     func inGlass<S: Shape>(_ shape: S, style: GlassStyle) -> some View {
-        modifier(InFrost(shape: shape, style: style)).modifier(InGlass(shape: shape, style: style)).modifier(GlassLookFace())
+        modifier(WidgetInkLift()).modifier(InFrost(shape: shape, style: style)).modifier(InGlass(shape: shape, style: style))
+            .modifier(GlassLookFace())
     }
 
     /// Always glass, whatever the theme (the Settings preview).
@@ -186,19 +187,22 @@ struct InGlass<S: Shape>: ViewModifier {
 /// Settings › Island › Frost (`GlassFrost`) for `inGlass(_:style:)`: the look's ground as a veil behind the content, so
 /// inside the glass and under the content, in the glass's shape (or its frame, for the owner's outline to cut), resolved
 /// in the look the glass hands its content. Under Light and dark it is the owner's choice, not an accessibility floor:
-/// at 0, nothing. Under Widget the dark ground is there at every Frost, from `GlassFrost.widgetFloor` (P874); a render's
-/// reference of the desktop widgets (`GlassStageInfo.bare`) has none.
+/// at 0, nothing. Under Widget the dark ground is there from its state's floor (`GlassFrost.widgetOpacity`): over the
+/// apps at every Frost from `GlassFrost.widgetFloor` (P874); on the desktop, the widgets dimmed, from a tenth (P1214);
+/// in full colour only as far as Frost asks (P1205). A render's reference of the desktop widgets (`GlassStageInfo.bare`)
+/// has none.
 struct InFrost<S: Shape>: ViewModifier {
     var shape: S
     var style: GlassStyle
     @Environment(\.glassFrost) private var frost
     @Environment(\.glassLook) private var glassLook
+    @Environment(\.widgetGlassState) private var widgetState
     @Environment(\.glassStage) private var stage
 
     func body(content: Content) -> some View {
         content.background {
-            if frost > 0 || glassLook == .widget, stage?.bare != true {
-                let colour = GlassFrost.colour(frost, look: glassLook)
+            if frost > 0 || (glassLook == .widget && widgetState != .fullColour), stage?.bare != true {
+                let colour = GlassFrost.colour(frost, look: glassLook, state: widgetState)
                 if style.glassFollowsShape {
                     shape.fill(colour)
                 } else {
@@ -462,9 +466,15 @@ enum GlassBackdrop: String, CaseIterable, Sendable {
     /// Glass look's sample wallpapers (P870): a night photo (a dark sky, a moon's glow, stars, a city's lights), a purple
     /// to pink gradient (lavender #8A8CC8 in its middle, where the owner's widgets stood) and a near-white one.
     case night, gradient, nearWhite
+    /// The owner's lavender-to-pink sunset of 2026-10-03 (P1205), drawn from their screenshot's samples: about #8E8AC6
+    /// where the panel stood at the top left, #8E8CC9 above the Batteries widget and #AE97C6 below it, pinker lower down.
+    case sunset
 
     /// Glass look's three, the owner's two first.
     static let wallpapers: [GlassBackdrop] = [.night, .gradient, .nearWhite]
+
+    /// The desktop widgets' full-colour look's three (P1205): the owner's sunset first, a pale one and a dark one.
+    static let widgetWallpapers: [GlassBackdrop] = [.sunset, .nearWhite, .night]
 
     /// The three the legibility checks use (P522).
     static let judged: [GlassBackdrop] = [.white, .black, .busy]
@@ -486,6 +496,11 @@ enum GlassBackdrop: String, CaseIterable, Sendable {
                            startPoint: .topLeading, endPoint: .bottomTrailing)
         case .nearWhite:
             LinearGradient(colors: [Color(hex: 0xF7F5F2), Color(hex: 0xEEF0F5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .sunset:
+            LinearGradient(stops: [.init(color: Color(hex: 0x8784C6), location: 0), .init(color: Color(hex: 0x8E8AC6), location: 0.3),
+                                   .init(color: Color(hex: 0xA392C7), location: 0.6), .init(color: Color(hex: 0xB89BC5), location: 0.82),
+                                   .init(color: Color(hex: 0xD2A6C0), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
         }
     }
 

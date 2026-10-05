@@ -5,65 +5,80 @@ import Testing
 @testable import IslandEngine
 @testable import JuiceIslandUI
 
-/// The public README's screenshots (P845), headless, from demo data only: the demo's fictional accounts and money, and
-/// four sessions in fictional folders (Claude asks to run a command, Claude edits a file, Codex runs a command, Codex is
-/// done). Files `readme-window`, `readme-island`, `readme-approval` and `readme-panel`; `JI_RENDER_DIR=<folder>` writes
+/// The public README's screenshots (P845, P980), headless, from the Demo sessions scenario only
+/// (`FixtureSessionFeed.Scenario.demoSessions`, the one Settings › Diagnostics › Demo sessions plays, P967): the demo's
+/// fictional accounts and money, and six sessions in fictional folders (Claude asks to run a command, Claude asks a
+/// question, Claude edits a file, Codex runs a command, Codex is done, Copilot CLI runs). Files `readme-window`,
+/// `readme-pill`, `readme-island`, `readme-approval`, `readme-question`, `readme-themes`, `readme-panel`, `readme-widget`,
+/// `readme-agents` (the first run's Agents screen) and the repository's `social-preview`; `JI_RENDER_DIR=<folder>` writes
 /// them there (the README's images are `docs/public/images` here, `docs/images` in the public repository). Nothing is
 /// shown on screen: `zsh scripts/render-all.sh ReadmeShotRenders`.
 @MainActor
 @Suite(.serialized)
 struct ReadmeShotRenders {
-    static let ask = "readme-ask"
-    static let edit = "readme-edit"
-    static let codexRun = "readme-codex-run"
-    static let codexDone = "readme-codex-done"
+    typealias ID = FixtureSessionFeed.DemoSessionsID
+    static let ask = ID.approval
+    static let question = ID.question
     /// The folders the shots may name: none is a real project.
-    static let folders: Set<String> = ["notes-site", "field-notes"]
+    static let folders: Set<String> = FixtureSessionFeed.demoSessionsFolders
 
-    static func environment() throws -> AppEnvironment {
+    static func environment(theme: JuiceTheme = .black) throws -> AppEnvironment {
         let settings = AppSettings.ephemeral()
+        settings.juiceTheme = theme
         settings.islandStyle = .clean
         settings.islandUsagePlacement = .section
         settings.islandShowsMoney = true
         settings.glyphStyle = .pixel
-        let env = AppEnvironment.demo(settings: settings, sessions: .empty)
-        let feed = try #require(env.fixtureFeed)
-        let now = DemoClock.now, m: TimeInterval = 60
-        var events = FixtureSessionFeed.start(edit, title: "Tighten the card spacing", project: "field-notes",
-                                              prompt: "tighten the cards", at: now - 18 * m)
-        events.append(.claudeSessionMetadataUpdated(ClaudeSessionMetadataUpdated(sessionID: edit, claudeMetadata: ClaudeSessionMetadata(
-            lastUserPrompt: "tighten the cards", currentTool: "Edit", currentToolInputPreview: "Sources/Cards/CardView.swift"),
-            timestamp: now - 2 * m)))
-        events.append(.activityUpdated(SessionActivityUpdated(sessionID: edit, summary: "Running Edit", phase: .running, timestamp: now - 2 * m)))
-        events += FixtureSessionFeed.start(codexRun, title: "Resize the site's images", project: "notes-site",
-                                           prompt: "resize the images", tool: .codex, at: now - 12 * m)
-        events.append(.sessionMetadataUpdated(SessionMetadataUpdated(sessionID: codexRun, codexMetadata: CodexSessionMetadata(
-            transcriptPath: FixtureSessionFeed.demoRollout(codexRun), lastUserPrompt: "resize the images", currentTool: "exec_command", currentCommandPreview: "sips -Z 512 *.png"),
-            timestamp: now - 1 * m)))
-        events.append(.activityUpdated(SessionActivityUpdated(sessionID: codexRun, summary: "Running exec_command", phase: .running,
-                                                              timestamp: now - 1 * m)))
-        events += FixtureSessionFeed.start(codexDone, title: "Draft the release notes", project: "notes-site",
-                                           prompt: "draft the release notes", tool: .codex, at: now - 40 * m)
-        events.append(.sessionCompleted(SessionCompleted(sessionID: codexDone, summary: "Drafted the notes.", timestamp: now - 9 * m)))
-        events += FixtureSessionFeed.start(ask, title: "Shoot the site's charts", project: "notes-site", prompt: "shoot the charts",
-                                           at: now - 5 * m)
-        feed.engine.loadPreviewEvents(events)
-        let request = FixtureSessionFeed.claudeRequest(ask, tool: "Bash", useID: "toolu_readme_mkdir", input: [
-            "command": "mkdir -p site/shots/light site/shots/dark", "description": "Make the folders for the shots"])
-        #expect(feed.engine.loadPreviewHookRequest(request, source: "claude", entrypoint: "cli"))
+        let env = AppEnvironment.demo(settings: settings, sessions: .demoSessions, usage: .showcase)
+        guard case .approval? = env.sessions.card(for: ask) else {
+            Issue.record("the scenario's approval is not waiting")
+            return env
+        }
         return env
     }
 
-    /// Every session the shots show is one of these four, in a fictional folder.
+    /// Every session the shots show is one of the scenario's six, in a fictional folder.
     @Test func theShotsShowOnlyFictionalFolders() throws {
         let env = try Self.environment()
-        #expect(Set(env.sessions.rows.map(\.id)) == [Self.ask, Self.edit, Self.codexRun, Self.codexDone])
+        #expect(Set(env.sessions.rows.map(\.id)) == [ID.approval, ID.question, ID.edit, ID.codexRun, ID.codexDone, ID.copilot])
         #expect(Set(env.sessions.rows.compactMap(\.project)).isSubset(of: Self.folders))
+        #expect(Self.folders == ["notes-site", "field-notes"])
+    }
+
+    /// The shots' usage reads as a Mac in good health, not one owner's setup or a broken state: a few batteries, each with
+    /// plenty left, and two money lines (P991).
+    @Test func theShotsShowAFewHealthyBatteriesAndTwoMoneyLines() throws {
+        let panel = try Self.environment().usage.panel
+        let batteries = panel.rows.flatMap(\.batteries)
+        #expect((2...3).contains(batteries.count), "\(batteries.map(\.alias))")
+        #expect(batteries.allSatisfy { if case let .available(_, low) = $0.state { !low } else { false } })
+        #expect((1...2).contains(panel.money.count), "\(panel.money.map(\.name))")
+    }
+
+    /// The Agents shot shows only the welcome fixture's made-up Mac: its folders' fixture names, no email, and no file of
+    /// the private app's (P925); the files Connect writes sit behind the "i", which the shot leaves closed.
+    @Test func theAgentsShotNamesOnlyFixtures() throws {
+        let env = Self.agentsEnvironment()
+        let model = WelcomeModel.fixture(step: .agents, env: env)
+        let lines = model.lines
+        #expect(Set(lines.map(\.name)).isSuperset(of: ["Claude Code", "Codex", "OpenCode", "Copilot CLI", "Cursor"]))
+        let words = lines.flatMap { [$0.name, $0.detail ?? "", $0.note ?? ""] }.joined(separator: " ")
+        #expect(!words.contains("@") && !words.contains("juice-island") && !words.contains("Juice Island"))
+        let folders = env.hooks.rows.map { ($0.folder as NSString).lastPathComponent }
+        #expect(Set(folders) == [".claude", ".claude-work", ".codex"])
     }
 
     @Test func window() throws {
         try RenderHarness.renderHosted(WindowRootView(drawsTrafficLights: true).environment(\.sessionGlyphsAnimated, false),
                                        "readme-window", size: CGSize(width: 1100, height: 640), env: try Self.environment())
+    }
+
+    /// The closed island in the notch: what sits there all day.
+    @Test func pill() throws {
+        let env = try Self.environment()
+        let scene = AppearanceRenders.islandScene(IslandGlassRenders.state(env), size: CGSize(width: 540, height: 64),
+                                                  backdrop: .preview, theme: .black, scheme: .dark)
+        try RenderHarness.render(scene, "readme-pill", env: env)
     }
 
     @Test func island() throws {
@@ -73,11 +88,65 @@ struct ReadmeShotRenders {
         try RenderHarness.render(scene, "readme-island", env: env)
     }
 
+    static func card(_ env: AppEnvironment, _ id: String) -> IslandUIState {
+        IslandGlassRenders.state(env, surface: .island, card: id, events: [(0, .present(.card(sessionID: id)))], at: 1.5)
+    }
+
     @Test func approval() throws {
         let env = try Self.environment()
-        let ui = IslandGlassRenders.state(env, surface: .island, card: Self.ask, events: [(0, .present(.card(sessionID: Self.ask)))], at: 1.5)
-        let scene = AppearanceRenders.islandScene(ui, size: CGSize(width: 540, height: 330), backdrop: .preview, theme: .black, scheme: .dark)
+        let scene = AppearanceRenders.islandScene(Self.card(env, Self.ask), size: CGSize(width: 540, height: 210), backdrop: .preview,
+                                                  theme: .black, scheme: .dark)
         try RenderHarness.render(scene, "readme-approval", env: env)
+    }
+
+    /// Hosted, so the card's reply field (an AppKit text field, which `ImageRenderer` cannot draw) shows as it is.
+    @Test func question() throws {
+        let env = try Self.environment()
+        let size = CGSize(width: 540, height: 310)
+        let scene = AppearanceRenders.islandScene(Self.card(env, Self.question), size: size, backdrop: .preview, theme: .black,
+                                                  scheme: .dark)
+        try RenderHarness.renderHosted(scene, "readme-question", size: size, env: env)
+    }
+
+    /// Black, Glass, Smoke and Solid, two by two, each with the same approval. Offscreen the window server composites no
+    /// glass, so Glass and Smoke are the renders' stand-in for it (`IslandGlassRenders`).
+    @Test func themes() throws {
+        let size = CGSize(width: 540, height: 232)
+        var tiles: [AnyView] = []
+        for theme in JuiceTheme.allCases {
+            let env = try Self.environment(theme: theme)
+            let scene = AppearanceRenders.islandScene(Self.card(env, Self.ask), size: size, backdrop: .preview, theme: theme, scheme: .dark)
+                .environment(env)
+                .overlay(alignment: .bottomLeading) {
+                    Text(theme.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.45), radius: 3, y: 1).padding(.horizontal, 16).padding(.bottom, 12)
+                }
+            tiles.append(AnyView(scene))
+        }
+        let grid = VStack(spacing: 0) {
+            HStack(spacing: 0) { tiles[0]; tiles[1] }
+            HStack(spacing: 0) { tiles[2]; tiles[3] }
+        }
+        try RenderHarness.render(grid, "readme-themes", size: CGSize(width: 2 * size.width, height: 2 * size.height),
+                                 env: try Self.environment())
+    }
+
+    /// The repository's social preview, 1280 by 640 pixels as GitHub asks: the approval in the notch, and the name. Not
+    /// in the README; the owner uploads it in the repository's settings.
+    @Test func socialPreview() throws {
+        let env = try Self.environment()
+        let size = CGSize(width: 640, height: 320)
+        let scene = AppearanceRenders.islandScene(Self.card(env, Self.ask), size: size, backdrop: .preview, theme: .black, scheme: .dark)
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Juice").font(.system(size: 30, weight: .bold))
+                    Text("Your agents, in the notch").font(.system(size: 16, weight: .medium)).opacity(0.9)
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.4), radius: 4, y: 1)
+                .padding(.horizontal, 28).padding(.bottom, 22)
+            }
+        try RenderHarness.render(scene, "social-preview", size: size, env: env)
     }
 
     @Test func panel() throws {
@@ -86,5 +155,42 @@ struct ReadmeShotRenders {
         let size = try #require(content.size)
         try RenderHarness.render(DesktopPanelView().padding(PanelGeometry.margin), "readme-panel",
                                  size: PanelGeometry.windowSize(for: size), env: env, background: PRenders.wallpaper)
+    }
+
+    /// The desktop widget, medium, on the panel's wallpaper, drawn as WidgetKit frames it (`WidgetRenders`).
+    @Test func widget() throws {
+        let env = try Self.environment()
+        let snapshot = WidgetSnapshot.make(env, at: DemoClock.now)
+        let size = WidgetRenders.Size.medium, margin = WidgetRenders.margin
+        let view = IslandWidgetView(snapshot: snapshot, face: .medium,
+                                    size: CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin),
+                                    date: DemoClock.now, tinted: false)
+            .padding(margin)
+            .frame(width: size.width, height: size.height)
+            .background {
+                RoundedRectangle(cornerRadius: WidgetRenders.radius, style: .continuous).fill(IslandTheme.bg)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: WidgetRenders.radius, style: .continuous))
+            .padding(24)
+            .background(PRenders.wallpaper)
+        try RenderHarness.render(view, "readme-widget", env: env)
+    }
+
+    // MARK: The Agents shot
+
+    static func agentsEnvironment() -> AppEnvironment {
+        let settings = AppSettings.ephemeral()
+        settings.juiceTheme = .black
+        settings.appearance = .dark
+        return AppEnvironment.demo(settings: settings, sessions: .empty)
+    }
+
+    /// The first run's Agents screen on the welcome's made-up Mac (`WelcomeModel.fixture`): Claude Code with Main and
+    /// Work, Codex, OpenCode, Copilot CLI and Cursor, each with Approve or Watch, ticked, and Connect.
+    @Test func agents() throws {
+        let env = Self.agentsEnvironment()
+        let model = WelcomeModel.fixture(step: .agents, env: env)
+        try RenderHarness.renderHosted(WelcomeView(model: model).environment(\.sessionGlyphsAnimated, false), "readme-agents",
+                                       size: WelcomeView.size, env: env, scheme: .dark)
     }
 }

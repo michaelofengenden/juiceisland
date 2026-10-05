@@ -4,7 +4,7 @@ import OpenIslandCore
 import Testing
 @testable import JuiceIslandUI
 
-/// Settings › Setup › SSH hosts (P749, P751): the rows' words for every state, the `Host` names read from a fixture
+/// Settings › Agents › SSH hosts (P749, P751): the rows' words for every state, the `Host` names read from a fixture
 /// config, and Set up and Remove through a fake ssh runner (no connection, no real `~/.ssh`, a scratch store).
 @MainActor
 @Suite(.serialized)

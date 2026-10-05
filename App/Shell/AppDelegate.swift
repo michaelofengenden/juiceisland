@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var widgetFeed: WidgetFeed?
     /// Settings › General › Appearance on the app, which every window inherits (P761, P766).
     private var appearance: AppAppearance?
+    /// The first run's welcome while it shows (P950): the island shows above it whatever Show as says, and the chosen
+    /// mode applies as it ends.
+    private var welcome: WelcomeWindowController?
 
     init(environment: AppEnvironment) {
         env = environment
@@ -36,18 +39,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSettings: { [weak self] pane in self?.showSettings(pane) },
             setShowAs: { [weak self] mode in self?.env.settings.showAs = mode },
             quit: { AppQuit.request() })
+        env.actions.showWelcome = { [weak self] in self?.showWelcome() }
+        // The welcome shows by itself only on a Mac where this app never ran and no Juice hooks are installed: never on
+        // the owner's (P950). Decided before any window, so Window mode's window waits for it; the few hook files are
+        // read only where there was no earlier launch. The welcome's own mark counts as one.
+        let firstRun = WelcomeGate.atLaunch(env.settings, juiceHooks: WelcomeGate.juiceHooksPresent())
         let menu = MainMenu(env: env)
         NSApp.mainMenu = menu.build()
         self.menu = menu
+        // Settings › Island › Display lists this Mac's screens, never the renders' names (P940).
+        IslandDisplays.provider = { IslandDisplays.live() }
         island = IslandPanelController(env: env)
         let desktopPanel = DesktopPanelController(env: env)
         self.desktopPanel = desktopPanel
         env.actions.resetPanelPosition = { [weak desktopPanel] in desktopPanel?.resetPosition() }
         desktopPanel.start()
         dockIcon = DockIcon(settings: env.settings)
-        applyMode()
+        if firstRun { showWelcome(firstRun: true) } else { applyMode() }
         observeMode()
         env.hooks.activate()
+        if !env.settings.newAgents.isEmpty { env.agentsPane.refreshSources() }
         env.liveSessions?.activate()
         if let sessions = env.liveSessions { env.liveRemoteHosts?.attach(to: sessions) }
         env.launchAtLogin?.applyAtLaunch()
@@ -70,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.banners?.start()
         env.snoozeEnd?.start()
         env.autoTidy?.start()
+        env.autoInstall?.start()
     }
 
     /// The bridge stops on quit (Live sessions); the jump key and the menu bar icon go; the hourly update check stops,
@@ -141,6 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyMode() {
         let mode = env.settings.showAs
         menu?.update(showAs: mode)
+        // While the welcome shows, the island stays above it; the chosen mode applies as it ends (P950).
+        guard welcome == nil else { return updateActivationPolicy() }
         if mode != appliedMode {
             appliedMode = mode
             if mode == .window {
@@ -192,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateActivationPolicy(settingsOpening: Bool = false) {
         let policy = ActivationPolicyRule.policy(showAs: env.settings.showAs,
                                                  dockIconInIslandMode: env.settings.dockIconInIslandMode,
-                                                 auxiliaryWindowOpen: settingsOpening || (settingsWindow?.isOpen ?? false))
+                                                 auxiliaryWindowOpen: settingsOpening || (settingsWindow?.isOpen ?? false) || welcome != nil)
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
         dockIcon?.update(hasTile: policy == .regular)
     }
@@ -231,6 +245,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = mainWindow ?? MainWindowController(env: env)
         mainWindow = controller
         controller.show()
+    }
+
+    /// The welcome (P950, P951): by itself on a first run, else from Settings › About › Show welcome. The island shows
+    /// above it on every step, whatever Show as says; as it ends, Show as applies (the window comes, or the island stays).
+    /// `firstRun`: Pick a look starts from the notch and Launch at Login on; Show welcome's starts from the settings (P973).
+    func showWelcome(firstRun: Bool = false) {
+        if let welcome {
+            NSApp.activate()
+            return welcome.window.makeKeyAndOrderFront(nil)
+        }
+        let controller = WelcomeWindowController(env: env, services: LiveWelcomeServices(settings: env.settings), firstRun: firstRun)
+        controller.onFinish = { [weak self] _ in self?.welcomeEnded() }
+        welcome = controller
+        updateActivationPolicy(settingsOpening: true)
+        NSApp.activate()
+        island?.show()
+        controller.show()
+    }
+
+    private func welcomeEnded() {
+        welcome = nil
+        appliedMode = nil
+        applyMode()
     }
 
     func showSettings(_ pane: SettingsPane) {

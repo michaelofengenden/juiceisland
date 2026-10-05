@@ -59,7 +59,7 @@ enum SettingsTheme {
         static let money = Color(hex: 0x30D158)
         static let desktopPanel = Color(hex: 0x5E5CE6)
         static let diagnostics = Color(hex: 0x66D4CF)
-        static let setup = Color(hex: 0xFF9F0A)
+        static let agents = Color(hex: 0xFF9F0A)
         static let about = Color(hex: 0x0A84FF)
     }
 

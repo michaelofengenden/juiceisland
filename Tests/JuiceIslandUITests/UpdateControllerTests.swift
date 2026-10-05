@@ -369,8 +369,9 @@ struct UpdateControllerTests {
     // MARK: Protocol and words
 
     @Test func statusLinesParse() {
-        let words = ["pulling", "building", "verifying", "ready", "installing", "restarting", "done"]
-        #expect(words.compactMap { UpdateStatusLine(line: $0) } == [.pulling, .building, .verifying, .ready, .installing, .restarting, .done])
+        let words = ["pulling", "waiting", "checkout", "building", "verifying", "ready", "installing", "restarting", "done"]
+        #expect(words.compactMap { UpdateStatusLine(line: $0) }
+            == [.pulling, .waiting, .checkout, .building, .verifying, .ready, .installing, .restarting, .done])
         #expect(UpdateStatusLine(line: "failed:the repo is on side, not main") == .failed("the repo is on side, not main"))
         #expect(UpdateStatusLine(line: "failed:main and origin/main have diverged; pull by hand") == .failed("main and origin/main have diverged; pull by hand"))
         #expect(UpdateStatusLine(line: "failed:") == .failed("see the log"))
@@ -397,8 +398,10 @@ struct UpdateControllerTests {
 
     @Test func phasesMapToTheirWords() {
         #expect(UpdatePhase.idle.text == nil)
-        #expect([UpdatePhase.pulling, .building, .installing, .restarting, .restartNeeded].map(\.text)
-            == ["Fetching…", "Building…", "Installing…", "Restarting…", "Restart to update"])
+        #expect([UpdatePhase.pulling, .waiting, .settingUp, .building, .installing, .restarting, .restartNeeded].map(\.text)
+            == ["Fetching…", "Waiting for the background build…", "Setting up…", "Building…", "Installing…", "Restarting…",
+                "Restart to update"])
+        #expect(UpdatePhase.waiting.isRunning && UpdatePhase.settingUp.isRunning)
         #expect(UpdatePhase.updated("0d92e4b").text == "Updated to 0d92e4b")
         #expect(!UpdatePhase.failed(reason: "x").isRunning && UpdatePhase.installing.isRunning)
         #expect(UpdatePhase.restartNeeded.isRunning && !UpdatePhase.updated("0d92e4b").isRunning)
@@ -409,6 +412,8 @@ struct UpdateControllerTests {
         #expect(UpdateText.menuTitle(available: info, phase: .building, progress: UpdateProgress(fraction: 0.5, buildPercent: 63))
             == "Updating: Building 63%")
         #expect(UpdateText.menuTitle(available: info, phase: .pulling) == "Updating: Fetching")
+        #expect(UpdateText.menuTitle(available: info, phase: .waiting) == "Updating: Waiting for the background build")
+        #expect(UpdateText.menuTitle(available: info, phase: .settingUp) == "Updating: Setting up")
         #expect(UpdateText.menuTitle(available: info, phase: .restartNeeded) == "Restart to Update")
         #expect(UpdateText.menuTitle(available: nil, phase: .updated("0d92e4b")) == "Updated to 0d92e4b")
         #expect(UpdateText.menuTitle(available: info, phase: .updated("0d92e4b")) == "Update Juice Island (3 changes)")

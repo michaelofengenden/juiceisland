@@ -53,8 +53,8 @@ struct OpenCodeSetupTests {
     func theRowSaysWhatTheFileIsForTheInstalledOpenCode() {
         let two = OpenCodeVersion(major: 2, minor: 0, patch: 18)
         let one = OpenCodeVersion(major: 1, minor: 18, patch: 33)
-        func of(_ file: OpenCodePluginFile, _ version: OpenCodeVersion?, running: Bool = false) -> OpenCodePluginChoice {
-            OpenCodePluginChoice.of(file, version: version, openIslandRunning: running)
+        func of(_ file: OpenCodePluginFile, _ version: OpenCodeVersion?) -> OpenCodePluginChoice {
+            OpenCodePluginChoice.of(file, version: version)
         }
         #expect(of(.missing, two) == OpenCodePluginChoice(word: "Not installed", amber: false, action: .install))
         #expect(of(.ours(revision: OpenCodePlugin.revision), two) == OpenCodePluginChoice(word: "Installed", amber: false, action: .remove))
@@ -69,8 +69,6 @@ struct OpenCodeSetupTests {
             let choice = of(file, two)
             #expect(choice.action == nil && choice.refusal == choice.word && choice.amber, "\(file)")
         }
-        let refused = of(.missing, two, running: true)
-        #expect(refused.action == nil && refused.refusal == OpenCodePluginChoice.openIslandRunning)
     }
 
     // MARK: Writes
@@ -90,18 +88,41 @@ struct OpenCodeSetupTests {
                 == [OpenCodePlugin.fileName])
     }
 
+    /// Juice's plugin has a file of its own, named per flavor; Open Island's `open-island.js` is never touched, and is not
+    /// Juice's (P934).
     @Test
-    func updateReplacesOpenIslandsPluginInPlace() throws {
+    func juicesPluginHasAFileOfItsOwnBesideOpenIslands() throws {
+        let folder = Self.folder()
+        defer { Self.remove(folder) }
+        let installer = OpenCodePluginInstaller(configDirectory: folder, fileStem: "juice")
+        #expect(installer.pluginURL.lastPathComponent == "juice.js" && installer.legacyURL.lastPathComponent == "open-island.js")
+        try FileManager.default.createDirectory(at: installer.legacyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.openIslandPlugin.write(to: installer.legacyURL)
+        let config = Data(#"{"plugin":["file://\#(installer.legacyURL.path)"],"theme":"dark"}"#.utf8)
+        try config.write(to: folder.appendingPathComponent("config.json"))
+        #expect(installer.readFile() == .missing && installer.readLegacyFile() == .openIsland)
+        try installer.install()
+        #expect(installer.readFile() == .ours(revision: OpenCodePlugin.revision))
+        try installer.remove()
+        #expect(installer.readFile() == .missing)
+        #expect(try Data(contentsOf: installer.legacyURL) == Self.openIslandPlugin)
+        #expect(try Data(contentsOf: folder.appendingPathComponent("config.json")) == config)
+    }
+
+    /// Juice's revisions 1 and 2 were written under Open Island's name: while Juice's own file is missing that one reads
+    /// as Juice's older plugin, and Update moves it into Juice's own file (P934).
+    @Test
+    func juicesOlderPluginUnderOpenIslandsNameMovesIntoItsOwnFile() throws {
         let folder = Self.folder()
         defer { Self.remove(folder) }
         let installer = OpenCodePluginInstaller(configDirectory: folder)
-        Self.put(Self.openIslandPlugin, in: installer)
-        // Open Island registered its file in config.json; the registration stays valid for the new file.
-        let config = Data(#"{"plugin":["file://\#(installer.pluginURL.path)"],"theme":"dark"}"#.utf8)
-        try config.write(to: folder.appendingPathComponent("config.json"))
+        try FileManager.default.createDirectory(at: installer.legacyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("// Juice Island plugin for OpenCode, revision 1.\nexport default {}\n".utf8).write(to: installer.legacyURL)
+        #expect(installer.readFile() == .ours(revision: 1))
+        #expect(OpenCodePluginChoice.of(installer.readFile(), version: nil).action == .update)
         try installer.install()
         #expect(installer.readFile() == .ours(revision: OpenCodePlugin.revision))
-        #expect(try Data(contentsOf: folder.appendingPathComponent("config.json")) == config)
+        #expect(!FileManager.default.fileExists(atPath: installer.legacyURL.path))
     }
 
     @Test
@@ -126,26 +147,20 @@ struct OpenCodeSetupTests {
         #expect(attributes[.type] as? FileAttributeType == .typeSymbolicLink)
     }
 
-    /// Remove takes the file and, when Open Island registered it, its `config.json` entry (backed up, 3 kept); the
-    /// rest of the config stays.
+    /// Remove takes Juice's own file only: Juice never registered it in `config.json`, which stays as it is (P934).
     @Test
-    func removeTakesTheFileAndOpenIslandsRegistration() throws {
+    func removeTakesOnlyJuicesFile() throws {
         let folder = Self.folder()
         defer { Self.remove(folder) }
         let installer = OpenCodePluginInstaller(configDirectory: folder)
         try installer.install()
         let configURL = folder.appendingPathComponent("config.json")
-        try Data(#"{"plugin":["file://\#(installer.pluginURL.path)","opencode-wakatime"],"theme":"dark"}"#.utf8).write(to: configURL)
-        for second in 0..<4 {
-            try Data("{}".utf8).write(to: folder.appendingPathComponent("config.json.backup.2026-09-2\(second)T10-00-00Z"))
-        }
+        let config = Data(#"{"plugin":["opencode-wakatime"],"theme":"dark"}"#.utf8)
+        try config.write(to: configURL)
         try installer.remove()
         #expect(installer.readFile() == .missing)
-        let config = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
-        #expect(config["plugin"] as? [String] == ["opencode-wakatime"])
-        #expect(config["theme"] as? String == "dark")
-        let backups = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasPrefix("config.json.backup.") }
-        #expect(backups.count == HookBackups.keep)
+        #expect(try Data(contentsOf: configURL) == config)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasPrefix("config.json.backup.") }.isEmpty)
         // Nothing there: nothing to do.
         try installer.remove()
     }

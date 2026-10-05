@@ -28,6 +28,17 @@ public struct ProcessEntry: Equatable, Sendable {
     }
 }
 
+/// A process's executable, from the kernel (`proc_pidpath`); nil when it is gone or not ours to ask.
+public enum ProcessPath {
+    public static func of(_ pid: Int32) -> String? {
+        guard pid > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+}
+
 /// Looks up a process by pid. `SystemProcessTable` asks the kernel; tests use a fixed table.
 public protocol ProcessTable: Sendable {
     func entry(pid: Int32) -> ProcessEntry?

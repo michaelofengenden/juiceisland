@@ -77,13 +77,17 @@ struct JumpNoteLine: View {
     }
 }
 
-/// The island's note, under its header, for whichever row was clicked.
+/// The island's note, under its header, for whichever row was clicked; else Allow all's line (P1031).
 struct IslandJumpNote: View {
     @Environment(AppEnvironment.self) private var env
 
     var body: some View {
         if let note = env.sessions.jumpNote {
             JumpNoteText(note: note)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let note = env.answerAllNote {
+            AnswerAllNoteText(note: note)
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

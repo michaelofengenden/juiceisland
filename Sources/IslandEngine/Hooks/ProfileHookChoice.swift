@@ -49,33 +49,32 @@ public struct ProfileHookChoice: Equatable, Sendable {
 
     public var isAvailable: Bool { action != nil && refusal == nil }
 
-    /// `setupState` is `HookDrift.setupState` of the same status, so a drifted profile offers Repair.
+    /// `setupState` is `HookDrift.setupState` of the same status, so a drifted profile offers Repair, and one whose hooks
+    /// still call Open Island's helper offers Repair as Move (P903). Open Island running refuses nothing any more:
+    /// Juice's hooks name its own helper and socket (P900); `openIslandRunning` is kept for the callers' sake.
     public static func of(_ status: ProfileHookStatus, setupState: ProfileHookStatus.State, openIslandRunning: Bool,
                           helperPresent: Bool) -> ProfileHookChoice {
         let action: ProfileHookAction?
         switch setupState {
         case .notInstalled, .blockedByOtherIsland: action = .install
-        case .partial, .broken, .codexFeatureOff: action = .repair
+        case .partial, .broken, .codexFeatureOff, .oldHelper: action = .repair
         case .installed, .codexNeedsTrust: action = .remove
         case .folderMissing, .linkedConfig, .hasComments, .unreadable: action = nil
         }
         let refusal: ProfileHookRefusal?
-        if openIslandRunning {
-            refusal = .openIslandRunning
-        } else {
-            switch setupState {
-            case .folderMissing: refusal = .folderMissing
-            case let .linkedConfig(file): refusal = .linkedConfig(file: file)
-            case let .hasComments(file): refusal = .hasComments(file: file)
-            case let .unreadable(file): refusal = .unreadable(file: file)
-            default:
-                if status.vibeEntryCount > 0 {
-                    refusal = .otherIslandHooks(count: status.vibeEntryCount)
-                } else if action != .remove, !helperPresent {
-                    refusal = .helperMissing
-                } else {
-                    refusal = nil
-                }
+        switch setupState {
+        case .folderMissing: refusal = .folderMissing
+        case let .linkedConfig(file): refusal = .linkedConfig(file: file)
+        case let .hasComments(file): refusal = .hasComments(file: file)
+        case let .unreadable(file): refusal = .unreadable(file: file)
+        default:
+            // Remove takes Juice's own entries only, so Vibe Island's stand in the way of Install and Repair alone (P904).
+            if status.vibeEntryCount > 0, action != .remove {
+                refusal = .otherIslandHooks(count: status.vibeEntryCount)
+            } else if action != .remove, !helperPresent {
+                refusal = .helperMissing
+            } else {
+                refusal = nil
             }
         }
         return ProfileHookChoice(action: action, refusal: refusal)

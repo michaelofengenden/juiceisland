@@ -142,9 +142,10 @@ enum NotificationArming {
         }
     }
 
-    /// Our helper, for Claude: the managed `OpenIslandHooks` with `--source claude`.
+    /// Our helper, for Claude, with `--source claude`: Juice's own (`JuiceHooks`, P900) or, until a profile is moved, the
+    /// managed `OpenIslandHooks` it installed before.
     static func isOurs(_ command: String) -> Bool {
-        command.contains("OpenIslandHooks") && command.contains("--source claude")
+        (command.contains(HookHome.helperName) || command.contains("OpenIslandHooks")) && command.contains("--source claude")
     }
 
     /// Claude's matcher rule: none, empty or `*` matches all; otherwise a regular expression.

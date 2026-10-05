@@ -25,6 +25,7 @@ enum HookRowText {
         case .codexFeatureOff: "Hooks off"
         case .codexNeedsTrust: "Needs /hooks"
         case .blockedByOtherIsland: "Vibe Island hooks"
+        case .oldHelper: "Old helper"
         case .broken: "Broken"
         case .linkedConfig: "Linked file"
         case .hasComments: "Has comments"
@@ -97,10 +98,14 @@ enum HookRowText {
         }
         let installed: Int = if case let .partial(count, _) = state { count } else { status.managedEventCount }
         let refusal = (choice?.refusal).map(Self.refusal) ?? clickRefusal.map(Self.refusal)
-        return HookSetupRow(id: target.id, provider: target.provider, alias: target.alias, folder: folder(target.folder, home: home),
-                            word: word(for: state), detail: detail(for: state, missing: missing),
-                            tone: isProblem(state) ? .amber : .normal, action: choice?.action, refusal: refusal,
-                            busy: busy, events: "\(installed)/\(status.expectedEventCount)", isMonitored: target.isMonitored)
+        var row = HookSetupRow(id: target.id, provider: target.provider, alias: target.alias, folder: folder(target.folder, home: home),
+                               word: word(for: state), detail: detail(for: state, missing: missing),
+                               tone: isProblem(state) ? .amber : .normal, action: choice?.action, refusal: refusal,
+                               busy: busy, events: "\(installed)/\(status.expectedEventCount)", isMonitored: target.isMonitored,
+                               state: state)
+        // Hooks that still call Open Island's helper: Agents says "Move to Juice's helper", and Move is this Repair (P903).
+        if case .oldHelper = state { row.movesToJuiceHelper = choice?.action == .repair }
+        return row
     }
 
     /// Diagnostics' footnote: the helper, Open Island and Vibe Island, in one line. Open Island is left out when the

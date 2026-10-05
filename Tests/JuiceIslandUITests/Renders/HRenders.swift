@@ -67,7 +67,7 @@ struct HRenders {
         let env = AppEnvironment.demo()
         env.hooks = StubHooks(rows: Self.beforeCutover,
                               integrations: HookIntegrations(openIslandRunning: false, vibeProfiles: 2, helperInBuild: true))
-        try renderSettings(.setup, "H-setup-before-cutover", env: env)
+        try renderSettings(.agents, "H-setup-before-cutover", env: env)
     }
 
     @Test func setupWhileOpenIslandRunsWithoutAHelper() throws {
@@ -79,7 +79,7 @@ struct HRenders {
             Self.row(.codex, ".codex-gone", alias: "Gone", .folderMissing, managed: 0, helper: false),
         ]
         env.hooks = StubHooks(rows: rows, integrations: HookIntegrations(openIslandRunning: true, vibeProfiles: 0, helperInBuild: false))
-        try renderSettings(.setup, "H-setup-refused", env: env)
+        try renderSettings(.agents, "H-setup-refused", env: env)
     }
 
     @Test func diagnosticsHooks() throws {

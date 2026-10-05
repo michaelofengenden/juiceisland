@@ -134,20 +134,35 @@ extension SessionEngine {
                 }
             }
         case "Notification":
-            // Claude's notification types; another agent's Notification (Gemini's) says nothing here (OT2).
-            guard Self.claudeFormatSources.contains(note.agentSource ?? "claude") else { return }
-            notification(note, now: now)
+            // Claude's notification types, and the Watch agents' words for the same prompts (P1103, P1112); any other
+            // agent's Notification says nothing here (OT2).
+            guard let type = Self.notificationType(note) else { return }
+            notification(note, type: type, now: now)
         default:
             break
         }
     }
 
     /// The sources that send Claude Code's hooks, with its Notification types: Claude and its forks.
-    static let claudeFormatSources: Set<String> = ["claude", "qoder", "qwen", "factory", "droid", "codebuddy", "kimi"]
+    static let claudeFormatSources: Set<String> = ["claude", "qoder", "qwen", "factory", "droid", "codebuddy", "kimi",
+                                                   "copilot", "devin"]
 
-    private func notification(_ note: HookContextNote, now: Date) {
+    /// The note's notification type as Claude names it: Claude's and its forks' own; Grok Build's, which are Claude's
+    /// words (`permission_prompt`, `elicitation_dialog`, `idle_prompt`; xai-org/grok-build `updates.rs`, `spawn.rs`);
+    /// Gemini CLI's `ToolPermission`, sent just before its own prompt shows (gemini-cli `scheduler/confirmation.ts`), as
+    /// a `permission_prompt`. nil for any other.
+    static func notificationType(_ note: HookContextNote) -> String? {
+        switch note.agentSource ?? "claude" {
+        case let source where claudeFormatSources.contains(source): note.notificationType
+        case AgentKind.grok.rawValue: note.notificationType
+        case AgentKind.gemini.rawValue: note.notificationType == "ToolPermission" ? "permission_prompt" : nil
+        default: nil
+        }
+    }
+
+    private func notification(_ note: HookContextNote, type: String?, now: Date) {
         let sessionID = note.sessionID
-        switch note.notificationType {
+        switch type {
         case "permission_prompt":
             noticePermissionPrompt(sessionID: sessionID, agentID: note.agentID, now: now)
         case "idle_prompt":

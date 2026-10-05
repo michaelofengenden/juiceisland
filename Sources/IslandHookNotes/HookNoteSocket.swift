@@ -2,7 +2,9 @@ import Darwin
 import Foundation
 
 /// Where context notes go: a datagram socket in the app's own support folder, owned by the engine. It is not one of
-/// the hook sockets (`bridge.sock`, `/tmp/open-island-<uid>.sock`), which stay byte-identical to Open Island's.
+/// the hook sockets (`bridge.sock`, `/tmp/open-island-<uid>.sock`). A helper in a `HookHome` sends to its home's
+/// (`HookHome.notesURL`); the default here is where the private app has always listened, which a helper at Open
+/// Island's path still sends to.
 public enum HookNoteSocket {
     public static let folderName = "Juice Island"
     public static let fileName = "hook-notes.sock"
@@ -19,10 +21,11 @@ public enum HookNoteSocket {
             .appendingPathComponent(fileName)
     }
 
-    /// The helper's socket: the override when set, else the default.
-    public static func helperURL(environment: [String: String]) -> URL {
+    /// The helper's socket: the override when set, else its home's (a helper installed at `<home>/bin/JuiceHooks`,
+    /// P900), else the default, where a helper at Open Island's path has always sent its notes.
+    public static func helperURL(environment: [String: String], home: HookHome? = nil) -> URL {
         if let path = environment[overrideKey], !path.isEmpty { return URL(fileURLWithPath: path) }
-        return defaultURL
+        return home?.notesURL ?? defaultURL
     }
 
     static func homeDirectory() -> String {

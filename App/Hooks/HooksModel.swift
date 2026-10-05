@@ -22,6 +22,10 @@ struct HookSetupRow: Identifiable, Equatable, Sendable {
     /// "14/14", "3/4": our entries against the expected set.
     var events: String
     var isMonitored: Bool
+    /// The engine's state behind `word`; nil before the first reading. Settings › Agents words it its own way (P936).
+    var state: ProfileHookStatus.State? = nil
+    /// The hooks still call Open Island's helper: Agents shows "Move to Juice's helper", and Move is this row's Repair.
+    var movesToJuiceHelper = false
 
     var buttonTitle: String? { action.map(HookRowText.title(for:)) }
     var canClick: Bool { action != nil && refusal == nil && !busy }
@@ -34,10 +38,13 @@ struct HookIntegrations: Equatable, Sendable {
     var vibeProfiles: Int
     /// This build carries `Contents/Helpers/OpenIslandHooks`, which Install copies.
     var helperInBuild: Bool
+    /// Vibe Island is running: a notice, never a block (P914).
+    var vibeIslandRunning = false
 }
 
-/// The managed helper against this build's (P163). Every hook command names the managed copy, which only an Update
-/// click replaces: "Hook helper · Update" in Setup and on the drift rows. No hook config is written.
+/// The managed helper (`<the app's home>/bin/JuiceHooks`, P900) against this build's (P163). Every hook command names
+/// the managed copy, which only an Update click (or a Connect, Move or Repair) replaces: "Hook helper · Update" in
+/// Agents and on the drift rows. No hook config is written.
 enum HelperUpdate: Equatable, Sendable {
     case available
     case updating
@@ -73,8 +80,18 @@ protocol HooksModel: AnyObject {
     var openCodeRow: OpenCodeSetupRow? { get }
     /// The OpenCode row's Install, Update or Remove, on the owner's click only.
     func performOpenCode()
+    /// Takes Juice's own OpenCode plugin out, whatever its revision; never Open Island's or another file (Remove from
+    /// all agents, P939). On the owner's click only.
+    func removeOpenCode()
     /// Setup appeared: the plugin file is read again and the installed OpenCode's version asked (P487).
     func refreshOpenCode()
+    /// One action on several profiles, one after another (Settings › Agents' Connect, Move and Remove over a whole
+    /// agent, and Remove from all agents, P939). A requirement, not only an extension, so `ProfileHooks`' own runs
+    /// through `any HooksModel` (P945). On the owner's click only.
+    func run(_ action: ProfileHookAction, on ids: [String])
+    /// Every folder's files read again now, before a click that depends on them (the welcome's Switch to Juice, P955).
+    /// Reads only.
+    func readAgain() async
 }
 
 extension HooksModel {
@@ -82,7 +99,10 @@ extension HooksModel {
     func updateHelper() {}
     var openCodeRow: OpenCodeSetupRow? { nil }
     func performOpenCode() {}
+    func removeOpenCode() {}
     func refreshOpenCode() {}
+    func run(_ action: ProfileHookAction, on ids: [String]) { for id in ids { perform(action, on: id) } }
+    func readAgain() async {}
 
     /// Monitored rows a click could install now.
     var installableMonitoredRows: [HookSetupRow] {
@@ -125,26 +145,27 @@ final class DemoHooksModel: HooksModel {
     func installAllMonitored() {}
     func activate() {}
 
-    private static func row(_ alias: String, _ provider: Provider, _ folder: String, _ word: String, detail: String? = nil,
-                            amber: Bool = false, action: ProfileHookAction?, refusal: String? = nil, events: String) -> HookSetupRow {
-        HookSetupRow(id: Account.id(provider: provider, folder: folder), provider: provider, alias: alias, folder: folder, word: word,
-                     detail: detail, tone: amber ? .amber : .normal, action: action, refusal: refusal, busy: false, events: events,
-                     isMonitored: true)
+    private static func row(_ alias: String, _ provider: Provider, _ folder: String, _ state: ProfileHookStatus.State,
+                            detail: String? = nil, action: ProfileHookAction?, refusal: String? = nil, events: String) -> HookSetupRow {
+        HookSetupRow(id: Account.id(provider: provider, folder: folder), provider: provider, alias: alias, folder: folder,
+                     word: HookRowText.word(for: state), detail: detail, tone: HookRowText.isProblem(state) ? .amber : .normal,
+                     action: action, refusal: refusal, busy: false, events: events, isMonitored: true, state: state)
     }
 
     static let fixture: [HookSetupRow] = [
-        row("Main", .claude, "~/.claude", "Installed", action: .remove, events: "14/14"),
-        row("Work", .claude, "~/.claude-work", "Installed", action: .remove, events: "14/14"),
-        row("Research", .claude, "~/.claude-research", "Installed", action: .remove, events: "14/14"),
-        row("Lab", .claude, "~/.claude-lab", "Partial 12/14", detail: "Missing Notification, PreCompact", amber: true,
+        row("Main", .claude, "~/.claude", .installed, action: .remove, events: "14/14"),
+        row("Work", .claude, "~/.claude-work", .installed, action: .remove, events: "14/14"),
+        row("Research", .claude, "~/.claude-research", .installed, action: .remove, events: "14/14"),
+        row("Lab", .claude, "~/.claude-lab", .partial(installed: 12, expected: 14), detail: "Missing Notification, PreCompact",
             action: .repair, events: "12/14"),
-        row("Studio", .claude, "~/.claude-studio", "Installed", action: .remove, events: "14/14"),
-        row("Alt", .claude, "~/.claude-alt", "Not installed", action: .install, events: "0/14"),
-        row("Home", .codex, "~/.codex", "Installed", action: .remove, events: "4/4"),
-        row("Team", .codex, "~/.codex-team", "Needs /hooks", detail: HookRowText.trustHint, amber: true, action: .remove, events: "4/4"),
-        row("Night", .codex, "~/.codex-night", "Has comments", amber: true, action: nil,
+        row("Studio", .claude, "~/.claude-studio", .installed, action: .remove, events: "14/14"),
+        row("Alt", .claude, "~/.claude-alt", .notInstalled, action: .install, events: "0/14"),
+        row("Home", .codex, "~/.codex", .installed, action: .remove, events: "4/4"),
+        row("Team", .codex, "~/.codex-team", .codexNeedsTrust(untrustedEvents: ["Stop"]), detail: HookRowText.trustHint,
+            action: .remove, events: "4/4"),
+        row("Night", .codex, "~/.codex-night", .hasComments(file: "hooks.json"), action: nil,
             refusal: HookRowText.refusal(.hasComments(file: "hooks.json")), events: "0/4"),
-        row("Spare", .codex, "~/.codex-spare", "Installed", action: .remove, events: "4/4"),
-        row("Edge", .codex, "~/.codex-edge", "Not installed", action: .install, events: "0/4"),
+        row("Spare", .codex, "~/.codex-spare", .installed, action: .remove, events: "4/4"),
+        row("Edge", .codex, "~/.codex-edge", .notInstalled, action: .install, events: "0/4"),
     ]
 }

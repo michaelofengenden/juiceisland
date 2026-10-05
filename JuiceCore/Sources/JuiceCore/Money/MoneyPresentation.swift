@@ -61,7 +61,9 @@ public struct MoneyPresentation: Sendable, Equatable {
         }
         if let readPart { parts.append(readPart) }
         let status = failure?.statusWord(for: account.source) ?? (good == nil || !stale ? "Reading…" : "Stale")
-        let row = MoneyRowModel(id: account.rawValue, name: name, amount: nil, hoverLabel: ([name] + parts).joined(separator: " · "))
+        let word = failure?.rowWord ?? (good == nil || !stale ? "Reading" : "Stale")
+        let row = MoneyRowModel(id: account.rawValue, name: name, amount: nil, hoverLabel: ([name] + parts).joined(separator: " · "),
+                                word: word)
         return MoneyPresentation(account: account, row: row, parts: parts, shortParts: Array(parts.prefix(2)), runwayHours: nil,
                                  creditLeftShare: nil, denominator: "—", lastRead: lastRead, status: status, isReadable: false)
     }

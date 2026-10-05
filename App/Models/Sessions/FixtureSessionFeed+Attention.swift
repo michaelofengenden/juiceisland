@@ -97,6 +97,8 @@ extension FixtureSessionFeed {
     /// Loads what the scenario reads besides the bridge's events, through the engine's live paths.
     static func loadAttention(_ scenario: Scenario, into engine: SessionEngine, now: Date) {
         switch scenario {
+        case .demoSessions:
+            loadDemoSessions(into: engine)
         case .owner:
             engine.loadPreviewRollout(sessionID: AttentionID.codexQuestion, transcriptPath: paperRollout, lines: paperLines(now: now))
         case .codexAppContext:

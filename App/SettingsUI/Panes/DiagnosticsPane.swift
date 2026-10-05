@@ -12,6 +12,8 @@ struct DiagnosticsPane: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.juiceTheme) private var theme
     @State private var copied = false
+    /// Demo sessions' row (P967): shown when the pane opens with ⌥ held, or while it is on.
+    @State private var revealsDemoSessions = NSEvent.modifierFlags.contains(.option)
 
     /// The widest a row's value may be: the row in the Settings window, less its label.
     static let valueWidth: CGFloat = 400
@@ -84,7 +86,8 @@ struct DiagnosticsPane: View {
                 // With the Bridge row saying Open Island runs, the Hooks footnote does not say it again.
                 DiagnosticsHooksSection(openIslandSaid: bridge == LiveSessions.refusalText(for: SessionEngineError.otherIslandRunning))
                 // The island's motion as this display shows it, and the 120 Hz vote: both off, and nothing runs at rest;
-                // and who draws the outline.
+                // and who draws the outline. The owner's tools: the public flavor shows none of them (P1060).
+                if DiagnosticsText.showsMotionTools(env.flavor) {
                 FormSection("Motion", footnote: settings.recordIslandMotion ? DiagnosticsText.motionFolder : nil) {
                     FormRow("Record island motion") {
                         SettingsSwitch(isOn: $settings.recordIslandMotion, label: "Record island motion")
@@ -105,6 +108,10 @@ struct DiagnosticsPane: View {
                         })
                     }
                 }
+                }
+                if let live = env.liveSessions, revealsDemoSessions || live.showcaseKind == .demoSessions {
+                    DemoSessionsSection(live: live)
+                }
             }
             // The build line and the two actions share the pane's last line, so no row holds buttons alone.
             HStack(spacing: 8) {
@@ -117,20 +124,46 @@ struct DiagnosticsPane: View {
                 if usage.refreshUnavailableReason == nil {
                     PushButton(title: "Refresh All") { usage.refreshAll() }
                 }
-                PushButton(title: copied ? "Copied" : "Copy Report") { copyReport(accountLines, moneyLines, bridge: bridge, attention: attention,
-                                                                                   details: attentionDetails) }
+                PushButton(title: copied ? "Copied" : "Copy Report") {
+                    copy(reportText(accountLines, moneyLines, bridge: bridge, attention: attention, details: attentionDetails))
+                    copied = true
+                }
+                // The public flavor's bug form, filled in the browser; nothing is sent from here (P1065).
+                if let repo = DiagnosticsText.reportBugRepo(env.flavor) {
+                    PushButton(title: "Report a Bug") {
+                        reportBug(repo: repo, reportText(accountLines, moneyLines, bridge: bridge, attention: attention,
+                                                         details: attentionDetails))
+                    }
+                    .help("Opens the bug form on GitHub with this report filled in. You send it there.")
+                }
             }
             .padding(.top, 12)
         }
     }
 
-    private func copyReport(_ accounts: [DiagnosticsText.AccountEntry], _ money: [(MoneyRowModel, (next: String, status: String))],
-                            bridge: String?, attention: String?, details: String?) {
-        let text = DiagnosticsText.report(lines: accounts.map { ($0.label, $0.provider, $0.line) }, money: money.map { ($0.0.name, $0.1.status) },
-                                          bridge: bridge, attention: attention, attentionDetails: details, stamp: env.updateChecker.stamp)
+    private func reportText(_ accounts: [DiagnosticsText.AccountEntry], _ money: [(MoneyRowModel, (next: String, status: String))],
+                            bridge: String?, attention: String?, details: String?) -> String {
+        DiagnosticsText.report(lines: accounts.map { ($0.label, $0.provider, $0.line) }, money: money.map { ($0.0.name, $0.1.status) },
+                               bridge: bridge, attention: attention, attentionDetails: details, stamp: env.updateChecker.stamp)
+    }
+
+    private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        copied = true
+    }
+
+    /// Opens the bug form with its fields filled (`BugReport`); a report cut to fit the link is copied whole first.
+    private func reportBug(repo: String, _ report: String) {
+        let last = BugReport.lastSession(env.sessions.rows)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        guard let link = BugReport.link(repo: repo, agent: BugReport.agentOption(last?.agent),
+                                        terminal: BugReport.terminalOption(host: last?.host, hasSession: last != nil),
+                                        macOS: BugReport.macOSLine(), version: version, report: report) else { return }
+        if link.cut {
+            copy(report)
+            copied = true
+        }
+        NSWorkspace.shared.open(link.url)
     }
 }
 
@@ -195,4 +228,24 @@ struct DiagnosticsTable: View {
 
     /// Header 9 + 14 + 5; each row 5 + 15.5 + 5 (12.5 pt text) + 1 separator.
     static func height(rows: Int) -> CGFloat { 28 + CGFloat(rows) * 25.5 }
+}
+
+/// Diagnostics › Screenshots › Demo sessions (P967): made-up sessions on the island and in the window, for screenshots
+/// and the README's video, in place of the real ones while it is on. Never stored: a relaunch shows the real sessions.
+struct DemoSessionsSection: View {
+    let live: LiveSessions
+
+    var body: some View {
+        FormSection("Screenshots", footnote: DemoSessionsText.footnote) {
+            FormRow("Demo sessions") {
+                SettingsSwitch(isOn: Binding(get: { live.showcaseKind == .demoSessions },
+                                             set: { live.show($0 ? DemoSessionsPlayer.makeFeed().makeModel() : nil, as: $0 ? .demoSessions : nil) }),
+                               label: "Demo sessions")
+            }
+        }
+    }
+}
+
+enum DemoSessionsText {
+    static let footnote = "Made-up sessions in made-up folders, for screenshots. Real ones show again when it is off."
 }

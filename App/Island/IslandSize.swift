@@ -19,8 +19,9 @@ struct IslandSize: Equatable, Sendable {
     /// The widths Settings › Island offers. 460 is the narrowest whose header wing still holds the brand glyph and the
     /// usage strip's pair beside a 185 pt notch (P401).
     static let widths = [460, 480, 520, 580, 640]
-    /// The text sizes it offers.
-    static let textSizes = [12, 13, 14, 15]
+    /// The text sizes it offers: 16 since wave 3 (P1012), as large as a Clean row's lines grow before its card's buttons
+    /// and the usage strip, which keep their sizes, look small beside them.
+    static let textSizes = [12, 13, 14, 15, 16]
 
     init(outer: CGFloat, text: CGFloat) {
         self.outer = outer

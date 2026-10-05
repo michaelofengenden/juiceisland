@@ -52,6 +52,10 @@ final class FixtureSessionFeed {
         /// The owner's screenshot of 2026-09-30 (P660, P661): a Codex app thread whose hooks named no host asks a question,
         /// its prompt the app's in-app browser context and then the owner's words (`FixtureSessionFeed+CodexApp.swift`).
         case codexAppContext
+        /// Diagnostics' Demo sessions and the README's shots (P967, `FixtureSessionFeed+DemoSessions.swift`): Claude asks
+        /// to run a command and asks a question, Claude edits, Codex runs a command and is done, Copilot CLI runs; in
+        /// made-up folders only.
+        case demoSessions
     }
 
     /// Session ids, so renders and tests can pick a card.
@@ -96,6 +100,8 @@ final class FixtureSessionFeed {
     let engine: SessionEngine
     let recorder = Recorder()
     let now: Date
+    /// The engine's and the model's clock: `now` held still (renders, tests), or the wall clock (Demo sessions, P967).
+    let clock: @Sendable () -> Date
     /// What the scenario's folders' `.git` would say (`GitBranches.fixed`): nothing is read.
     let branchReads: [String: GitHead.Read]
     var sentCommands: [BridgeCommand] { recorder.all }
@@ -104,12 +110,14 @@ final class FixtureSessionFeed {
     /// `sendsFail`: every command and reply a card sends fails, as an unreachable bridge or terminal would, so the cards
     /// keep their "Not sent" state (renders and tests; `sendsFail` can change later). Replies land in `sentReplies`,
     /// never in a terminal.
-    init(scenario: Scenario = .allStates, now: Date = DemoClock.now, sendsFail: Bool = false) {
+    init(scenario: Scenario = .allStates, now: Date = DemoClock.now, sendsFail: Bool = false, clock: (@Sendable () -> Date)? = nil) {
         self.now = now
+        let clock = clock ?? { now }
+        self.clock = clock
         branchReads = scenario == .details ? Self.detailsBranchReads : [:]
         let recorder = recorder
         recorder.failing = sendsFail
-        engine = SessionEngine.preview(clock: { now }, commands: { command in
+        engine = SessionEngine.preview(clock: clock, commands: { command in
             if recorder.failing { throw CocoaError(.featureUnsupported) }
             recorder.append(command)
         }, toolCalls: Self.toolCalls, replies: { route, text in
@@ -134,8 +142,8 @@ final class FixtureSessionFeed {
     /// A sessions model over this feed; row clicks are recorded and noted "Demo session", never jumped. `stalledAfter`:
     /// off unless given, so the demo's long runs stay running (P312).
     func makeModel(stalledAfter: TimeInterval? = nil) -> EngineSessionsModel {
-        let now = now
-        return EngineSessionsModel(engine: engine, clock: { now }, stalledAfter: { stalledAfter }, branches: GitBranches(.fixed(branchReads)))
+        let clock = clock
+        return EngineSessionsModel(engine: engine, clock: { clock() }, stalledAfter: { stalledAfter }, branches: GitBranches(.fixed(branchReads)))
     }
 
     // MARK: Events
@@ -157,6 +165,7 @@ final class FixtureSessionFeed {
         case .details: return detailsEvents(now: now)
         case .replies: return repliesEvents(now: now)
         case .codexAppContext: return codexAppContextEvents(now: now)
+        case .demoSessions: return demoSessionsEvents(now: now)
         }
     }
 
@@ -379,6 +388,8 @@ final class FixtureSessionFeed {
 
     /// The transcript's tool calls, by call id: what Claude asked to run, write or fetch, whole.
     static let toolCalls: [String: ClaudeHookJSONValue] = [
+        // The welcome's Hello demo (P963).
+        "toolu_hello_test": .object(["command": .string(HelloDemo.command), "description": .string("Run the tests")]),
         "toolu_demo_push": .object(["command": .string(pushCommand), "description": .string("Push window-mode to origin and track it")]),
         "toolu_demo_plan": .object(["plan": .string("""
             ## Render harness

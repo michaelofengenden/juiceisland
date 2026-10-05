@@ -10,10 +10,14 @@ protocol DesktopPanelSurface: AnyObject {
     var isShown: Bool { get }
     func show()
     func hide()
-    /// Unlocked: dragging the background moves the panel.
+    /// Unlocked: pressing anywhere on the panel and moving moves it (`PanelDrag`).
     var movesByDragging: Bool { get set }
-    /// Called when the panel moved without `setPanelFrame`: the owner dragged it.
+    /// The owner's drag is under way, the button still down: where the panel is now is not yet where it was left.
+    var isDragging: Bool { get }
+    /// Called at each step of the owner's drag: the panel moved without `setPanelFrame`.
     var onUserMove: (@MainActor () -> Void)? { get set }
+    /// Called when the owner lets go of a drag: the panel is where it was left (P1215).
+    var onUserDrop: (@MainActor () -> Void)? { get set }
 }
 
 /// Juice spec §2.6: a non-activating panel just above the desktop icons, on every Space, that never takes focus, never
@@ -24,9 +28,12 @@ final class DesktopPanelWindow: NSPanel, DesktopPanelSurface {
     static let style: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
 
     var onUserMove: (@MainActor () -> Void)?
-    /// The last frame the controller asked for: a move to it is ours, any other move is a drag.
-    private var placedFrame: CGRect?
+    var onUserDrop: (@MainActor () -> Void)?
     private var moveObserver: NSObjectProtocol?
+    /// The owner's drag (`PanelDrag`, P1200): the press it holds, or the move under way.
+    private var drag = PanelDrag<NSEvent>()
+    /// Where the pointer is, in screen points: the system's, read at each press and step (tests set their own).
+    var pointer: @MainActor () -> CGPoint = { NSEvent.mouseLocation }
 
     init() {
         super.init(contentRect: CGRect(origin: .zero, size: PanelGeometry.windowSize(for: Theme.Panel.size)),
@@ -39,6 +46,8 @@ final class DesktopPanelWindow: NSPanel, DesktopPanelSurface {
         hidesOnDeactivate = false
         canHide = false
         isReleasedWhenClosed = false
+        // Never AppKit's or the window server's background drag, which never moved this window (P1200): it drags
+        // itself (`sendEvent`).
         isMovableByWindowBackground = false
         isExcludedFromWindowsMenu = true
         animationBehavior = .none
@@ -55,7 +64,6 @@ final class DesktopPanelWindow: NSPanel, DesktopPanelSurface {
 
     func setPanelFrame(_ panel: CGRect) {
         let window = panel.insetBy(dx: -PanelGeometry.margin, dy: -PanelGeometry.margin)
-        placedFrame = window
         if window != frame { setFrame(window, display: true, animate: false) }
     }
 
@@ -63,39 +71,98 @@ final class DesktopPanelWindow: NSPanel, DesktopPanelSurface {
     func show() { if !isVisible { orderFrontRegardless() } }
     func hide() {
         hoverController?.dismiss()
+        abandonDrag()
         if isVisible { orderOut(nil) }
     }
 
-    var movesByDragging: Bool {
-        get { isMovableByWindowBackground }
-        set { isMovableByWindowBackground = newValue }
+    var movesByDragging = false {
+        didSet { if !movesByDragging { abandonDrag() } }
     }
 
-    /// Only the owner's drag counts: unlocked, with the button down. A move macOS makes by itself (a display that went
-    /// away) is not remembered; the controller places the panel again when the displays change. Any move takes the
-    /// hover chip away, since it was placed beside the panel's old frame.
+    /// A press or a drag cut short (Lock position came on, or the panel hid, with the button still down): the press is
+    /// forgotten, and a panel already moved stays where it is, a move of the owner's like any (`onUserMove`, which the
+    /// controller saves once nothing holds it, P1215). No drop follows: its release goes on as it comes.
+    private func abandonDrag() {
+        let moved = drag.isMoving
+        drag.cancel()
+        if moved { onUserMove?() }
+    }
+
+    /// The owner's drag is under way: the hover chip waits until it ends.
+    var isDragging: Bool { drag.isMoving }
+
+    /// Any move takes the hover chip away, since it was placed beside the panel's old frame. Only the owner's drag is
+    /// remembered (`handle`); a move macOS makes by itself (a display that went away) is not, and the controller places
+    /// the panel again when the displays change.
     private func moved() {
         hoverController?.dismiss()
-        guard frame.origin != placedFrame?.origin, isMovableByWindowBackground, NSEvent.pressedMouseButtons & 1 != 0 else { return }
-        onUserMove?()
+    }
+
+    // MARK: The drag (P1200 to P1203)
+
+    override func sendEvent(_ event: NSEvent) {
+        for forwarded in handle(event) { super.sendEvent(forwarded) }
+    }
+
+    /// The owner's drag, unlocked, from the window's own events (no monitor): a left press on the panel is held; once
+    /// the pointer has gone past `PanelDragRule.threshold` the window follows it, each step the owner's move
+    /// (`onUserMove`), and the release is the drop (`onUserDrop`, where the controller saves it per display, P1215); a
+    /// press that never went that far reaches the content at its release, with the release, as the click it was. Locked, a press outside the panel (its shadow's margin), a
+    /// Control-click (the right-click menu) and every other event go on as they came. Nothing here takes focus or
+    /// activates the app. Returns what goes on to the content, in order.
+    func handle(_ event: NSEvent) -> [NSEvent] {
+        switch event.type {
+        case .leftMouseDown:
+            let point = pointer()
+            guard movesByDragging, !event.modifierFlags.contains(.control), panelFrame.contains(point) else {
+                drag.cancel()
+                return [event]
+            }
+            drag.press(event, at: point, origin: frame.origin)
+            return []
+        case .leftMouseDragged:
+            guard drag.isHolding else { return [event] }
+            let starts = !drag.isMoving
+            if let origin = drag.drag(to: pointer()) {
+                if starts { hoverController?.dismiss() }
+                setFrameOrigin(origin)
+                onUserMove?()
+            }
+            return []
+        case .leftMouseUp:
+            switch drag.release() {
+            case .click(let press): return [press, event]
+            case .drop:
+                onUserDrop?()
+                return []
+            case .none: return [event]
+            }
+        default:
+            return [event]
+        }
     }
 
     /// The real window with the panel view and its hover chip.
     static func make(env: AppEnvironment) -> DesktopPanelWindow {
         let window = DesktopPanelWindow()
+        let widgets = DesktopWidgetWatch()
         let hover = PanelHoverController(panel: window, theme: { env.settings.juiceTheme }, frost: { env.settings.glassFrost },
-                                         look: { env.settings.glassLook })
-        let root = DesktopPanelRootView(actions: .desktop(env: env), hover: { [weak hover] target in hover?.pointer(over: target) })
+                                         look: { env.settings.glassLook }, widgets: { widgets.state })
+        let root = DesktopPanelRootView(actions: .desktop(env: env), hover: { [weak hover] target in hover?.pointer(over: target) },
+                                        widgets: widgets)
             .juiceThemeFromSettings().environment(env)
         let host = NSHostingView(rootView: root)
         host.sizingOptions = []
         window.contentView = host
         window.hoverController = hover
+        window.widgets = widgets
         return window
     }
 
     /// Kept alive with the window.
     private var hoverController: PanelHoverController?
+    /// The desktop widgets' look the panel follows under Glass look Widget (P1204), kept alive with the window.
+    private(set) var widgets: DesktopWidgetWatch?
 }
 
 // MARK: Hover labels
@@ -140,21 +207,29 @@ final class PanelHoverController {
     private let frost: @MainActor () -> Double
     /// Glass look (P870), read at each show as the theme is.
     private let look: @MainActor () -> GlassLookChoice
+    /// The desktop widgets' look the panel is in (P1204), read at each show.
+    private let widgets: @MainActor () -> WidgetGlassState
     private var current: HoverTarget?
+    /// The target the pointer rests on, if any (tests).
+    var resting: HoverTarget? { current }
     private var dwell: Task<Void, Never>?
     private var isShown = false
 
     init(panel: DesktopPanelWindow, theme: @escaping @MainActor () -> JuiceTheme = { .black },
-         frost: @escaping @MainActor () -> Double = { 0 }, look: @escaping @MainActor () -> GlassLookChoice = { .lightAndDark }) {
+         frost: @escaping @MainActor () -> Double = { 0 }, look: @escaping @MainActor () -> GlassLookChoice = { .lightAndDark },
+         widgets: @escaping @MainActor () -> WidgetGlassState = { .overApps }) {
         self.panel = panel
         self.theme = theme
         self.frost = frost
         self.look = look
+        self.widgets = widgets
         label = PanelHoverLabelWindow(above: panel.level)
     }
 
-    /// Called on every enter and leave: an enter names the target, an exit names the target it left.
+    /// Called on every enter and leave: an enter names the target, an exit names the target it left. Nothing shows while
+    /// the owner drags the panel (P1202): the next target after the drop starts a fresh rest.
     func pointer(over target: HoverTarget?) {
+        guard panel?.isDragging != true else { return }
         if let target, target.isExit {
             // A late exit: the pointer already entered another target.
             guard target.id == current?.id else { return }
@@ -178,7 +253,7 @@ final class PanelHoverController {
 
     private func show(_ text: String) {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
-        label.setText(text, theme: theme(), frost: frost(), look: look())
+        label.setText(text, theme: theme(), frost: frost(), look: look(), widgets: widgets())
         // The chip view pads itself by 10 on each side for its shadow.
         let chip = CGSize(width: label.frame.width - 20, height: label.frame.height - 20)
         let origin = PanelHoverPlacement.origin(labelSize: chip, panelFrame: panel.panelFrame, visibleFrame: screen.visibleFrame)
@@ -229,15 +304,17 @@ final class PanelHoverLabelWindow: NSPanel {
 
     override var canBecomeKey: Bool { false }
 
-    func setText(_ text: String, theme: JuiceTheme = .black, frost: Double = 0, look: GlassLookChoice = .lightAndDark) {
-        host.rootView = PanelHoverChip(text: text, theme: theme, frost: frost, look: look)
+    func setText(_ text: String, theme: JuiceTheme = .black, frost: Double = 0, look: GlassLookChoice = .lightAndDark,
+                 widgets: WidgetGlassState = .overApps) {
+        host.rootView = PanelHoverChip(text: text, theme: theme, frost: frost, look: look, widgets: widgets)
         setContentSize(host.fittingSize)
     }
 
-    /// The theme the chip draws in now, its Frost and its Glass look.
+    /// The theme the chip draws in now, its Frost, its Glass look and the desktop widgets' look it takes.
     var theme: JuiceTheme { host.rootView.theme }
     var frost: Double { host.rootView.frost }
     var look: GlassLookChoice { host.rootView.look }
+    var widgets: WidgetGlassState { host.rootView.widgets }
 
     /// The label's fades are the panel's only motion; Reduce Motion removes them.
     func fade(to alpha: CGFloat, duration: TimeInterval) {
@@ -250,18 +327,20 @@ final class PanelHoverLabelWindow: NSPanel {
 }
 
 /// The chip's window content: the label in the panel's theme, dark as the panel is (Glass: in the glass's own
-/// adaptation, as the panel), with the panel's Frost and Glass look.
+/// adaptation, as the panel), with the panel's Frost, Glass look and desktop widgets' look.
 struct PanelHoverChip: View {
     let text: String
     let theme: JuiceTheme
     var frost: Double = 0
     var look: GlassLookChoice = .lightAndDark
+    var widgets: WidgetGlassState = .overApps
 
     var body: some View {
         PanelHoverLabelView(text: text)
             .environment(\.juiceTheme, theme)
             .environment(\.glassFrost, frost)
             .environment(\.glassLook, look)
+            .environment(\.widgetGlassState, widgets)
             .modifier(PanelInkScheme(theme: theme))
     }
 }

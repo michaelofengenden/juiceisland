@@ -29,9 +29,9 @@ struct OpenCodeSetupRow: Equatable, Sendable {
 
     var canClick: Bool { action != nil && refusal == nil && !busy }
 
-    static func make(file: OpenCodePluginFile, version: OpenCodeVersion?, openIslandRunning: Bool, clickRefusal: String?,
-                     busy: Bool, folder: String) -> OpenCodeSetupRow {
-        let choice = OpenCodePluginChoice.of(file, version: version, openIslandRunning: openIslandRunning)
+    static func make(file: OpenCodePluginFile, version: OpenCodeVersion?, clickRefusal: String?, busy: Bool,
+                     folder: String) -> OpenCodeSetupRow {
+        let choice = OpenCodePluginChoice.of(file, version: version)
         return OpenCodeSetupRow(title: version.map { "OpenCode \($0.text)" } ?? "OpenCode", folder: folder, word: choice.word,
                                 tone: choice.amber ? .amber : .normal, action: choice.action,
                                 refusal: clickRefusal ?? choice.refusal, busy: busy)
@@ -103,17 +103,26 @@ final class OpenCodePluginModel {
         version = asked
     }
 
-    func row(openIslandRunning: Bool, home: String = NSHomeDirectory()) -> OpenCodeSetupRow? {
+    func row(home: String = NSHomeDirectory()) -> OpenCodeSetupRow? {
         guard isOnMac, let file else { return nil }
-        return OpenCodeSetupRow.make(file: file, version: version, openIslandRunning: openIslandRunning, clickRefusal: clickRefusal,
-                                     busy: busy, folder: OpenCodeSetupRow.shown(installer.configDirectory, home: home))
+        return OpenCodeSetupRow.make(file: file, version: version, clickRefusal: clickRefusal, busy: busy,
+                                     folder: OpenCodeSetupRow.shown(installer.configDirectory, home: home))
     }
 
     /// The row's button, on the owner's click only. A refusal or a failed write is kept for the row until Setup is
     /// shown again.
-    func perform(openIslandRunning: Bool) async {
-        guard !busy, let file, !openIslandRunning else { return }
-        guard let action = OpenCodePluginChoice.of(file, version: version, openIslandRunning: false).action else { return }
+    /// `only`: Remove from all agents' Remove, which takes out Juice's own plugin whatever its revision and nothing else.
+    /// Juice's plugin has a file of its own, so Open Island running stands in the way of nothing (P934).
+    func perform(only: OpenCodePluginAction? = nil) async {
+        guard !busy, let file else { return }
+        let action: OpenCodePluginAction
+        if let only {
+            guard only == .remove, case .ours = file else { return }
+            action = .remove
+        } else {
+            guard let chosen = OpenCodePluginChoice.of(file, version: version).action else { return }
+            action = chosen
+        }
         busy = true
         clickRefusal = nil
         let installer = installer
@@ -136,7 +145,7 @@ final class OpenCodePluginModel {
     }
 }
 
-/// One OpenCode row, drawn as a profile's row is (`HookSetupRowView`).
+/// One OpenCode row on its own (the providers' renders); Settings › Agents draws it as an agent's row (`AgentRowView`).
 struct OpenCodeSetupRowView: View {
     let row: OpenCodeSetupRow
     @Environment(AppEnvironment.self) private var env

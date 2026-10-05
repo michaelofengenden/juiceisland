@@ -29,6 +29,14 @@ enum DiagnosticsText {
         return "\(build) · engine \(IslandEngineInfo.vendorVersion)"
     }
 
+    /// Diagnostics › Motion (recording, the 120 Hz vote, the outline, the last motions) is the owner's A/B tooling: the
+    /// public flavor shows none of it and runs on its defaults (P1060).
+    static func showsMotionTools(_ flavor: AppFlavor = .current) -> Bool { !flavor.isPublic }
+
+    /// Report a Bug's repository: the public flavor's, when the build names one (P1065); the private app keeps Copy
+    /// Report alone.
+    static func reportBugRepo(_ flavor: AppFlavor = .current) -> String? { flavor.isPublic ? flavor.publicRepo : nil }
+
     /// Where Record island motion writes, under Diagnostics › Motion while it is on.
     static var motionFolder: String { "One JSON per motion in ~/Library/Logs/\(AppFlavor.current.logsFolderName)/motion." }
 

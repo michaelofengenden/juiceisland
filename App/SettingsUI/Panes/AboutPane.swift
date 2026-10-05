@@ -11,17 +11,17 @@ struct AboutPane: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 8) {
                 AppIconView()
-                Text(Product.name).font(Fonts.sys(22, .bold)).foregroundStyle(SettingsTheme.ink).padding(.top, 4)
-                Text(Self.buildLine(env.updateChecker.stamp)).font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink2)
+                Text(env.flavor.productName).font(Fonts.sys(22, .bold)).foregroundStyle(SettingsTheme.ink).padding(.top, 4)
+                Text(Self.buildLine(env.updateChecker.stamp, flavor: env.flavor)).font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink2)
                 Text("Engine from Open Island (GPL-3.0)").font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink3)
-                if let licence = Self.licenceLine() {
+                if let licence = Self.licenceLine(flavor: env.flavor) {
                     if let text = Self.licenceURL(resources: Bundle.main.resourceURL) {
                         Link(licence, destination: text).font(Fonts.sys(11))
                     } else {
                         Text(licence).font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink3)
                     }
                 }
-                if let source = Product.flavor.sourceURL {
+                if let source = env.flavor.sourceURL {
                     Link("Source code", destination: source).font(Fonts.sys(11))
                 }
             }
@@ -30,8 +30,14 @@ struct AboutPane: View {
             .padding(.bottom, 28)
             AboutUpdatesSection()
             FormSection {
+                // The first run's four screens again (P951): Connect still writes only on its click.
+                Button { env.actions.showWelcome() } label: {
+                    AboutAction(icon: ChromeIcon.notch, title: "Show welcome", colour: SettingsTheme.ink)
+                }
+                .buttonStyle(.plain)
+                .help("The first run's four screens: agents, a look and a first session")
                 Button { env.actions.quit() } label: {
-                    AboutAction(icon: ChromeIcon.quit, title: "Quit \(Product.name)", colour: SettingsTheme.destructive)
+                    AboutAction(icon: ChromeIcon.quit, title: "Quit \(env.flavor.productName)", colour: SettingsTheme.destructive)
                 }
                 .buttonStyle(.plain)
             }

@@ -18,7 +18,9 @@ enum QuietLaneRig {
         func stop() {}
     }
 
-    static func live(_ probe: Probe, settings: AppSettings, player: RecordingSoundPlayer) -> LiveSessions {
+    /// `scene`: the quiet scenes the app would read (P1005, P1006); none unless a test gives some.
+    static func live(_ probe: Probe, settings: AppSettings, player: RecordingSoundPlayer,
+                     scene: @escaping @MainActor () -> QuietScene = { .none }) -> LiveSessions {
         settings.liveSessions = true
         settings.suppressForFocusedSessions = false
         let live = LiveSessions(settings: settings, demo: { FixtureSessionFeed(scenario: .prototype).makeModel() }, engine: {
@@ -36,7 +38,7 @@ enum QuietLaneRig {
             dependencies.now = { probe.now }
             dependencies.scheduleSignalCheck = { _, _ in }
             return SessionEngine(configuration: configuration, dependencies: dependencies)
-        }, profiles: { LiveProfiles(accounts: [], discovered: []) }, sounds: player, away: { probe.away })
+        }, profiles: { LiveProfiles(accounts: [], discovered: []) }, sounds: player, away: { probe.away }, scene: scene)
         live.activate()
         return live
     }
@@ -54,9 +56,9 @@ enum QuietLaneRig {
         .activityUpdated(SessionActivityUpdated(sessionID: id, summary: "Prompt: \(text)", phase: .running, timestamp: date))
     }
 
-    static func permission(_ id: String, _ toolUseID: String, at date: Date) -> AgentEvent {
+    static func permission(_ id: String, _ toolUseID: String, tool: String = "Bash", at date: Date) -> AgentEvent {
         .permissionRequested(PermissionRequested(sessionID: id, request: PermissionRequest(
-            title: "Bash", summary: "git status", affectedPath: "/tmp/project", toolName: "Bash", toolUseID: toolUseID), timestamp: date))
+            title: tool, summary: "git status", affectedPath: "/tmp/project", toolName: tool, toolUseID: toolUseID), timestamp: date))
     }
 
     static func question(_ id: String, at date: Date) -> AgentEvent {

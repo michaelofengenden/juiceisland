@@ -135,6 +135,7 @@ struct OpenedIslandView: View {
             IslandJumpNote()
             HookDriftRows(size: .island)
             WhatsNewCard(size: .island)
+            NewAgentsLine(size: .island)
             if section {
                 Group {
                     if settings.islandStyle == .clean { CleanUsageView(hover: ui.hover, inUse: ui.inUse) } else {
@@ -184,6 +185,7 @@ struct OpenedIslandView: View {
                 IslandJumpNote()
                 HookDriftRows(size: .island)
                 WhatsNewCard(size: .island)
+                NewAgentsLine(size: .island)
             }
             .modifier(IslandChannelReveal(ui: ui))
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
@@ -267,9 +269,8 @@ struct OpenedIslandView: View {
                 .modifier(IslandCollapse(collapsed: !block))
             }
             if layout.total == 0 {
-                Text("No sessions")
-                    .font(Fonts.sys(11))
-                    .foregroundStyle(palette.ink3)
+                // Where to start, not just "No sessions" (P965).
+                NoSessionsLine()
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .islandPart(.empty, live, ui: ui)
@@ -325,9 +326,7 @@ struct OpenedIslandView: View {
         let style = env.settings.islandStyle
         let layout = IslandListLayout.make(rows: env.sessions.rows, style: style, showAll: ui.showAll, now: env.sessions.now)
         if layout.total == 0 {
-            Text("No sessions")
-                .font(Fonts.sys(11))
-                .foregroundStyle(palette.ink3)
+            NoSessionsLine()
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
         } else if style == .clean {

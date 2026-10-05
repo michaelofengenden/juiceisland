@@ -140,6 +140,8 @@ final class FollowUps {
     /// The screen is locked or the owner's session switched out (`ScreenLockWatch.isAway`): with Quiet while locked on,
     /// a reminder then plays nothing, as every sound (P422).
     @ObservationIgnored var away: @MainActor () -> Bool = { false }
+    /// The screen mirrored or a Focus that quiets (`QuietScenes`): a reminder then plays nothing, as every sound (P1005).
+    @ObservationIgnored var scene: @MainActor () -> QuietScene = { .none }
 
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let sessions: any SessionsModel
@@ -337,7 +339,7 @@ final class FollowUps {
             let signal: EngineSignal = first.kind == .request ? .needsYou(sessionID: first.session) : .done(sessionID: first.session)
             let isQuestion = first.kind == .request && rows.first { $0.id == first.session }.map(QuestionsOpen.isQuestion) == true
             if live(), let name = SignalSounds.sound(for: signal, isCodexAppThread: false, stillNeedsYou: true,
-                                             isQuestion: isQuestion, away: away(), settings: settings, now: clock()) {
+                                             isQuestion: isQuestion, away: away(), scene: scene(), settings: settings, now: clock()) {
                 sounds.play(name, volume: SignalSounds.volume(settings))
             }
         }

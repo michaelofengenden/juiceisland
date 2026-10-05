@@ -5,7 +5,7 @@ import Testing
 
 /// Other agents shown as themselves (P151): the opened island's list in Clean and Detailed, the window's list, their
 /// cards in both island styles and the window, each by state and by agent, and the marks at row size and enlarged.
-/// Sessions: `FixtureSessionFeed.Scenario.agents` (OpenCode, Kimi and Qwen need you; Gemini, Cursor and Pi run; the
+/// Sessions: `FixtureSessionFeed.Scenario.agents` (OpenCode, Qoder and Qwen need you; Gemini, Cursor and Pi run; the
 /// rest done) and `.agentQuestion`. Names `ag-…`: `zsh scripts/render-all.sh AgentRenders`.
 @MainActor
 @Suite(.serialized)
@@ -89,11 +89,11 @@ struct AgentRenders {
         try islandCard("ag-card-detailed-opencode-approval", id: ID.openCodeApproval, style: .islandDetailed, height: 230, glyphs: .byAgent)
     }
     @Test func windowOpenCodeApproval() throws { try windowCard("ag-card-window-opencode-approval", id: ID.openCodeApproval, height: 180) }
-    @Test func cleanKimiApproval() throws {
-        try islandCard("ag-card-clean-kimi-approval", id: ID.kimiApproval, style: .islandClean, height: 200)
+    @Test func cleanQoderApproval() throws {
+        try islandCard("ag-card-clean-qoder-approval", id: ID.qoderApproval, style: .islandClean, height: 200)
     }
-    @Test func detailedKimiApproval() throws {
-        try islandCard("ag-card-detailed-kimi-approval", id: ID.kimiApproval, style: .islandDetailed, height: 230)
+    @Test func detailedQoderApproval() throws {
+        try islandCard("ag-card-detailed-qoder-approval", id: ID.qoderApproval, style: .islandDetailed, height: 230)
     }
     @Test func cleanQwenQuestion() throws {
         try islandCard("ag-card-clean-qwen-question", id: ID.qwenQuestion, style: .islandClean, height: 260)

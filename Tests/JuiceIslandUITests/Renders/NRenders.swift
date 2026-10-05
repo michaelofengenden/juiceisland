@@ -116,7 +116,7 @@ struct NRenders {
     private func setup(_ name: String, _ update: HelperUpdate) throws {
         let env = AppEnvironment.demo()
         env.hooks = DemoHooksModel(helperUpdate: update)
-        let view = SettingsRootView(navigation: SettingsNavigation(pane: .setup), drawsTrafficLights: true, scrolls: false)
+        let view = SettingsRootView(navigation: SettingsNavigation(pane: .agents), drawsTrafficLights: true, scrolls: false)
         let height = max(SettingsTheme.Metrics.minHeight, ARenders.fittingHeight(view, env: env))
         try RenderHarness.renderHosted(view, name, size: CGSize(width: SettingsTheme.Metrics.width, height: height), env: env)
     }

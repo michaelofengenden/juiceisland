@@ -14,6 +14,7 @@ struct PlanCardView: View {
     var style: CardStyle = .window
     @Environment(AppEnvironment.self) private var env
     @Environment(\.previewReasonField) private var previewReason
+    @Environment(\.cardKeys) private var keys
 
     var body: some View {
         let plan = card.plan.flatMap { $0.isEmpty ? nil : $0 }
@@ -23,7 +24,7 @@ struct PlanCardView: View {
                 DenyChoices(sessionID: card.sessionID, request: card.request?.id, canStop: card.canStop, send: card.send, style: style,
                             noTitle: "Keep planning", reasonPrompt: "Tell \(card.agent.displayName) what to change…",
                             top: plan == nil ? 0 : 8, startsWithReason: previewReason) {
-                    CardActionButton(title: "Approve", key: "⌃A", help: card.modes.isEmpty ? nil : Self.approveHelp, primary: true,
+                    CardActionButton(title: "Approve", key: keys.hint(.allow), help: card.modes.isEmpty ? nil : Self.approveHelp, primary: true,
                                      fills: style.buttonsFill) {
                         env.sessions.approve(card.sessionID, .allowOnce, request: card.request?.id)
                     }
