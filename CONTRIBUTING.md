@@ -12,6 +12,7 @@ You need Xcode 27, XcodeGen (`brew install xcodegen`), git and zsh.
 - `zsh scripts/build-app.sh --public`: the app for this Mac's chip, into `output/public.noindex/` (`--public --universal` for Apple silicon and Intel, as a release is). It is signed with the team and identity in `Signing.local.xcconfig` when you have one, and ad hoc otherwise. Copy `Signing.example.xcconfig` to that name and fill in what you have; git ignores it. Without a `SPARKLE_PUBLIC_ED_KEY` line the build has updates off.
 - `zsh scripts/release.sh --dry-run`: a whole release with stand-ins for every tool that reaches Apple, GitHub or the keychain. [docs/RELEASE.md](docs/RELEASE.md) is the real thing.
 - `zsh scripts/render-all.sh <suite>`: headless renders of the views into `renders/`, for checking a change by eye.
+- `JI_RENDER_DIR="$PWD/docs/images" swift test --filter 'Readme.*Renders'`: the README's images, drawn again from made-up sessions. After a change to the agents table, `JI_WRITE_AGENT_GRID=1 swift test --filter ReadmeAgentGridTests` rewrites the agent lists in README.md and docs/PRIVACY.md.
 - `zsh scripts/check-guardrails.sh`: the rules below that a build cannot check. Run it before you send a change.
 
 ## Rules the code keeps

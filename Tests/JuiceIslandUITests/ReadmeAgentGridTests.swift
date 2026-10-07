@@ -7,9 +7,12 @@ import Testing
 
 /// The READMEs' agent grid (P975): written from the agents table (`AgentHookTable.wave1`) and the three agents with rows of
 /// their own (Claude Code, Codex, OpenCode), so a new agent, a Watch that becomes Approve or a moved file shows up in the
-/// README or fails here. The grid sits between `<!-- agent-grid` and `<!-- /agent-grid -->` in `docs/public/README.md` (the
-/// public Juice's, `README.md` in the public repository) and in the private `README.md`. To rewrite both after a change to
-/// the table: `JI_WRITE_AGENT_GRID=1 swift test --filter ReadmeAgentGridTests`.
+/// README or fails here. The grid sits between `<!-- agent-grid` and `<!-- /agent-grid -->` in each page `readmes()` names,
+/// in that page's layout: the public README's Works with (`docs/public/README.md` here, `README.md` in the public
+/// repository) as two columns, Approve and Watch (`columns()`, P1587); the full table with each agent's files
+/// (`grid(stem:)`) in the public page on what Juice reads and changes (`docs/public/PRIVACY.md`, `docs/PRIVACY.md` there)
+/// and in the private `README.md`. To rewrite them all after a change to the table:
+/// `JI_WRITE_AGENT_GRID=1 swift test --filter ReadmeAgentGridTests`.
 struct ReadmeAgentGridTests {
     struct Line: Equatable {
         var name: String
@@ -72,17 +75,55 @@ struct ReadmeAgentGridTests {
         return text.joined(separator: "\n")
     }
 
+    /// The public README's Works with: the agents you answer from the island beside the ones you watch, each column in the
+    /// Agents pane's order, with the same marks and notes as the table (P1587). Files and usage are the table's, on the
+    /// page that says what Juice changes.
+    static func columns() -> String {
+        let lines = lines(stem: "juice")
+        let approve = lines.filter { $0.reach.hasPrefix(AgentReach.approve.title) }
+        let watch = lines.filter { $0.reach.hasPrefix(AgentReach.watch.title) }
+        func name(_ line: Line) -> String { line.name + line.reach.drop { $0.isLetter } }
+        var text = [begin, "",
+                    "| \(AgentReach.approve.title): answer from the island | \(AgentReach.watch.title): see it and jump back |",
+                    "|---|---|"]
+        for index in 0..<max(approve.count, watch.count) {
+            let left = index < approve.count ? name(approve[index]) : ""
+            let right = index < watch.count ? name(watch[index]) : ""
+            text.append("| \(left) | \(right) |")
+        }
+        text += ["", "¹ With Settings › Island › Answer Codex in Juice; \(AgentReach.watch.title) otherwise."]
+        for note in notes() { text += ["", "\(note.mark) \(note.text)."] }
+        text += ["", end]
+        return text.joined(separator: "\n")
+    }
+
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
-    /// The READMEs this tree holds, with the stem each one's grid names: the private tree's public and private READMEs,
-    /// or the public repository's one README (the export puts `docs/public/README.md` there).
-    static func readmes() -> [(url: URL, stem: String)] {
+    /// How a page draws the grid: the two columns of the public README, or the full table with each agent's files.
+    enum Layout { case columns, table }
+
+    struct Page {
+        var url: URL
+        var stem: String
+        var layout: Layout
+
+        /// The grid this page must hold, markers included.
+        var grid: String { layout == .columns ? ReadmeAgentGridTests.columns() : ReadmeAgentGridTests.grid(stem: stem) }
+    }
+
+    /// The pages with a grid this tree holds: here the public README, the public page on what Juice reads and changes, and
+    /// the private README; in the public repository (the export puts `docs/public/README.md` at `README.md` and
+    /// `docs/public/PRIVACY.md` at `docs/PRIVACY.md`) the first two.
+    static func readmes() -> [Page] {
         let publicDraft = root.appendingPathComponent("docs/public/README.md")
         let top = root.appendingPathComponent("README.md")
         if FileManager.default.fileExists(atPath: publicDraft.path) {
-            return [(publicDraft, "juice"), (top, "juice-island")]
+            return [Page(url: publicDraft, stem: "juice", layout: .columns),
+                    Page(url: root.appendingPathComponent("docs/public/PRIVACY.md"), stem: "juice", layout: .table),
+                    Page(url: top, stem: "juice-island", layout: .table)]
         }
-        return [(top, "juice")]
+        return [Page(url: top, stem: "juice", layout: .columns),
+                Page(url: root.appendingPathComponent("docs/PRIVACY.md"), stem: "juice", layout: .table)]
     }
 
     /// The text with its grid replaced; nil when the README has no grid markers.
@@ -94,16 +135,33 @@ struct ReadmeAgentGridTests {
 
     @Test func eachReadmesGridIsTheTables() throws {
         let write = ProcessInfo.processInfo.environment["JI_WRITE_AGENT_GRID"] == "1"
-        for (url, stem) in Self.readmes() {
+        for page in Self.readmes() {
+            let url = page.url
             let text = try String(contentsOf: url, encoding: .utf8)
-            let replaced = try #require(Self.replacingGrid(in: text, with: Self.grid(stem: stem)),
-                                        "\(url.lastPathComponent) has no agent grid")
+            let replaced = try #require(Self.replacingGrid(in: text, with: page.grid), "\(url.lastPathComponent) has no agent grid")
             if replaced != text, write {
                 try replaced.write(to: url, atomically: true, encoding: .utf8)
                 continue
             }
             #expect(replaced == text, "\(url.path) has an old agent grid: JI_WRITE_AGENT_GRID=1 swift test --filter ReadmeAgentGridTests")
         }
+    }
+
+    /// The public README's two columns hold every agent once, Approve on the left and Watch on the right, with the table's
+    /// marks, and name no file: those are on the page about what Juice changes (P1587).
+    @Test func theColumnsSplitEveryAgentByWhatYouCanDoFromTheIsland() throws {
+        let rows = Self.columns().components(separatedBy: "\n").filter { $0.hasPrefix("| ") && !$0.hasPrefix("| Approve") }
+        let cells = rows.map { $0.split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) } }
+        let left = cells.map { $0[1] }.filter { !$0.isEmpty }, right = cells.map { $0[2] }.filter { !$0.isEmpty }
+        let lines = Self.lines(stem: "juice")
+        #expect(left.count + right.count == lines.count)
+        for line in lines {
+            let shown = line.name + line.reach.drop { $0.isLetter }
+            let column = line.reach.hasPrefix("Approve") ? left : right
+            #expect(column.contains(shown), "\(line.name) is not in its column")
+        }
+        #expect(left.first == "Claude Code" && left.contains("Codex¹") && left.contains("Qoder²") && right.first == "Cursor")
+        #expect(!Self.columns().contains("~/") && !Self.columns().contains("juice-island"))
     }
 
     /// Every agent a click connects is in the grid, once, with the tag the Agents pane gives it.
@@ -124,16 +182,18 @@ struct ReadmeAgentGridTests {
         #expect(AgentRowText.openCode(openCode).reach.title == lines[2].reach)
     }
 
-    /// The README's first sentence names the job and every agent the grid lists, so a new agent in the table that the
-    /// top of the page leaves out fails here too.
-    @Test func thePublicReadmesFirstSentenceNamesEveryAgent() throws {
-        let (url, stem) = try #require(Self.readmes().first)
-        #expect(stem == "juice")
-        let text = try String(contentsOf: url, encoding: .utf8)
-        let first = try #require(text.components(separatedBy: "\n\n").dropFirst().first, "no first paragraph")
-        for line in Self.lines(stem: stem) {
-            #expect(first.contains(line.name), "the README's first sentence does not name \(line.name)")
-        }
+    /// Every count of agents the public README gives is the grid's, so a new agent in the table that the page's words
+    /// leave behind fails here too (P1588; before wave 10 its first sentence named every agent, P975).
+    @Test func thePublicReadmesCountsOfAgentsAreTheGrids() throws {
+        let page = try #require(Self.readmes().first)
+        #expect(page.layout == .columns && page.stem == "juice")
+        let text = try String(contentsOf: page.url, encoding: .utf8)
+        let total = Self.lines(stem: "juice").count
+        let counts = try Regex("([0-9]+) (?:coding )?agents").numbers(in: text)
+        #expect(!counts.isEmpty, "the README never says how many agents it works with")
+        for count in counts { #expect(count == total, "the README says \(count) agents; the grid has \(total)") }
+        let more = try Regex("Claude Code, Codex and ([0-9]+) more").numbers(in: text)
+        for count in more { #expect(count == total - 2, "the README says Claude Code, Codex and \(count) more; the grid has \(total)") }
     }
 
     /// The public grid names the public flavor's own files, the private one the private app's (P925).
@@ -147,13 +207,16 @@ struct ReadmeAgentGridTests {
         #expect(!publicGrid.contains(OpenCodePlugin.legacyFileName) && !privateGrid.contains(OpenCodePlugin.legacyFileName))
     }
 
+    /// The issue forms' folder: `docs/public/github/ISSUE_TEMPLATE/` here, `.github/ISSUE_TEMPLATE/` in the public
+    /// repository, so the tests that read them pass in both trees (P1597).
+    static var issueForms: URL {
+        let forms = root.appendingPathComponent("docs/public/github/ISSUE_TEMPLATE")
+        return FileManager.default.fileExists(atPath: forms.path) ? forms : root.appendingPathComponent(".github/ISSUE_TEMPLATE")
+    }
+
     /// The issue forms' Agent menus list every agent the grid does, so a bug in a new agent has its own choice (P979).
-    /// Only in the private tree, where the forms are `docs/public/github/ISSUE_TEMPLATE/` (`.github/ISSUE_TEMPLATE/` in the
-    /// public repository).
     @Test func theIssueFormsOfferEveryAgent() throws {
-        let forms = Self.root.appendingPathComponent("docs/public/github/ISSUE_TEMPLATE")
-        let published = Self.root.appendingPathComponent(".github/ISSUE_TEMPLATE")
-        let folder = FileManager.default.fileExists(atPath: forms.path) ? forms : published
+        let folder = Self.issueForms
         for form in ["bug.yml", "feature.yml"] {
             let text = try String(contentsOf: folder.appendingPathComponent(form), encoding: .utf8)
             let after = try #require(text.components(separatedBy: "id: agent").dropFirst().first, "\(form) has no Agent menu")
@@ -172,5 +235,12 @@ struct ReadmeAgentGridTests {
         #expect(Self.replacingGrid(in: "# Juice\n\nNo grid here.\n", with: Self.grid(stem: "juice")) == nil)
         let old = "a\n<!-- agent-grid: old -->\n| x |\n<!-- /agent-grid -->\nb"
         #expect(Self.replacingGrid(in: old, with: "GRID") == "a\nGRID\nb")
+    }
+}
+
+private extension Regex where Output == AnyRegexOutput {
+    /// The first capture of every match, as a number.
+    func numbers(in text: String) -> [Int] {
+        text.matches(of: self).compactMap { match in match.output[1].substring.flatMap { Int($0) } }
     }
 }

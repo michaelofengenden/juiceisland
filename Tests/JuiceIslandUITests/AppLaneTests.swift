@@ -152,8 +152,7 @@ struct ReportBugTests {
         #expect(BugReport.macOSLine(OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 2), appleSilicon: false)
                 == "27.0.2, Intel")
         // Every option it can give is one the public form lists.
-        let form = (try? String(contentsOf: RenderHarness.root.appendingPathComponent("docs/public/github/ISSUE_TEMPLATE/bug.yml"),
-                                encoding: .utf8)) ?? ""
+        let form = (try? String(contentsOf: ReadmeAgentGridTests.issueForms.appendingPathComponent("bug.yml"), encoding: .utf8)) ?? ""
         for option in ["Claude Code", "Codex", "OpenCode", "Copilot CLI", "Cursor", "Qwen Code", "Devin", "Kilo", "Another agent",
                        "None (usage, money or the app itself)", "Ghostty", "iTerm2", "Another one", "Does not matter here"] {
             #expect(form.contains("        - \(option)\n"), "\(option)")

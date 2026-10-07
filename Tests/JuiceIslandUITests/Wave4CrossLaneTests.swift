@@ -330,7 +330,7 @@ struct Wave4CrossLaneTests {
     /// new agent never lands on "Another agent".
     @Test
     func theIssueFormsListEveryAgentOfTheTable() throws {
-        let folder = RenderHarness.root.appendingPathComponent("docs/public/github/ISSUE_TEMPLATE")
+        let folder = ReadmeAgentGridTests.issueForms
         let bug = try String(contentsOf: folder.appendingPathComponent("bug.yml"), encoding: .utf8)
         let feature = try String(contentsOf: folder.appendingPathComponent("feature.yml"), encoding: .utf8)
         for spec in AgentHookTable.wave1 {
@@ -349,9 +349,9 @@ struct Wave4CrossLaneTests {
         let lines = ReadmeAgentGridTests.lines(stem: "juice")
         #expect(lines.count == 18 && Set(lines.map(\.name)).count == 18)
         #expect(lines.filter { $0.reach.hasPrefix("Approve") }.count == 9 && lines.filter { $0.reach == "Watch" }.count == 9)
-        for (url, stem) in ReadmeAgentGridTests.readmes() {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            #expect(text.contains(ReadmeAgentGridTests.grid(stem: stem)), "\(url.lastPathComponent)")
+        for page in ReadmeAgentGridTests.readmes() {
+            let text = try String(contentsOf: page.url, encoding: .utf8)
+            #expect(text.contains(page.grid), "\(page.url.lastPathComponent)")
         }
     }
 }

@@ -89,26 +89,25 @@ struct Wave4ReviewFixTests {
 
     // MARK: W4R-4 and W4R-5, what the READMEs promise (P1189, P1190)
 
-    static func readme(_ path: String) throws -> String {
-        try String(contentsOf: ReadmeAgentGridTests.root.appendingPathComponent(path), encoding: .utf8)
-    }
-
-    /// The public README's first sentence promises answers only from the agents marked Approve: nine of its eighteen
-    /// are Watch, and Pi has no prompts at all.
+    /// The public README promises answers only from the agents marked Approve: nine of its eighteen are Watch, and Pi
+    /// has no prompts at all. Its top never says it answers every agent, and the block on answering names the tag
+    /// (wave 10's page, P1588).
     @Test
     func thePublicReadmePromisesAnswersOnlyFromApproveAgents() throws {
-        let text = try Self.readme("docs/public/README.md")
-        let first = try #require(text.components(separatedBy: "\n\n").dropFirst().first)
-        #expect(!first.contains("answer its prompts"))
-        #expect(first.contains("answer prompts from the agents marked Approve"))
+        let page = try #require(ReadmeAgentGridTests.readmes().first)
+        let text = try String(contentsOf: page.url, encoding: .utf8)
+        let top = try #require(text.components(separatedBy: "\n## ").first)
+        #expect(!top.contains("answer its prompts") && !top.contains("every agent") && !top.contains("all agents"))
+        let answering = try #require(text.components(separatedBy: "\n### ").first { $0.hasPrefix("Answer") }, "no block on answering")
+        #expect(answering.contains("agent marked Approve"))
     }
 
-    /// Qoder is Approve for its CLI only: both grids say the IDE is Watch, in a note as Codex has.
+    /// Qoder is Approve for its CLI only: every grid says the IDE is Watch, in a note as Codex has.
     @Test
     func bothGridsSayQodersIDEIsWatch() throws {
-        for path in ["docs/public/README.md", "README.md"] {
-            let text = try Self.readme(path)
-            #expect(text.contains("| Qoder | Approve² |"), "\(path)")
+        for page in ReadmeAgentGridTests.readmes() {
+            let text = try String(contentsOf: page.url, encoding: .utf8), path = page.url.lastPathComponent
+            #expect(text.contains(page.layout == .columns ? "| Qoder² |" : "| Qoder | Approve² |"), "\(path)")
             #expect(text.contains("² Qoder CLI; the Qoder IDE is Watch."), "\(path)")
         }
     }

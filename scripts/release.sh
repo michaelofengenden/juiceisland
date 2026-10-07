@@ -330,7 +330,7 @@ if [[ $mode != local ]]; then
   fi
   [[ -z "$(git status --porcelain)" ]] || need "This folder has changes that are not committed. A release is built only from a
    commit that $public_repo has: commit them in the private repository and export again."
-  # The tap (P978, P990): the README's first install line reads it, so no release goes out before its clone is here. The
+  # The tap (P978, P990): the README's Homebrew line reads it, so no release goes out before its clone is here. The
   # cask goes into it, so it must be the tap's and clean.
   if [[ ! -d $tap_dir ]]; then
     need "No clone of ${public_repo%%/*}/homebrew-tap at $tap_dir. The README's brew install --cask ${public_repo%%/*}/tap/juiceisland
