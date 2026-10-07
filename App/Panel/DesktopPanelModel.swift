@@ -72,6 +72,7 @@ extension PanelActions {
             refreshAccountItem: { id in AccountRefreshMenu.item(id, usage: env.usage, now: Date()) },
             email: { id in env.usage.email(of: id) },
             signIn: { _ in env.actions.openSettings(.accounts) },
+            refreshLogin: { id in env.usage.refreshLogin(id) },
             manageAccount: { _ in env.actions.openSettings(.accounts) },
             refreshSource: { id in env.usage.refreshMoney(id) },
             canRefreshSource: { id in env.usage.canRefreshMoney(id) },
@@ -82,7 +83,7 @@ extension PanelActions {
             toggleLock: { env.settings.panelLocked.toggle() },
             isLocked: { env.settings.panelLocked },
             hidePanel: { env.settings.panelShowOnDesktop = false },
-            toggleShown: { env.settings.panelShowOnDesktop.toggle() },
+            toggleShown: { env.settings.togglePanelShown() },
             openSettings: { env.actions.openSettings(.desktopPanel) })
     }
 }

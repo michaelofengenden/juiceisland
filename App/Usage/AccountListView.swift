@@ -74,6 +74,31 @@ struct AccountListView: View {
     }
 
     private func accountRow(_ battery: BatteryModel, first: Bool, line: UsageSparkline?, sparklines: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            rowLine(battery, line: line, sparklines: sparklines)
+            // A lapsed login (P1551): what to do once Refresh login opened Codex, under its name.
+            if battery.state == .loginLapsed {
+                Text(Rules.loginRefreshHint)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SettingsTheme.ink2)
+                    .lineLimit(1)
+                    .padding(.leading, 45 + 12)
+                    .padding(.bottom, 4)
+            }
+        }
+        .font(.system(size: 12.5))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .frame(minHeight: 36)
+        .background {
+            if battery.id == selected { RoundedRectangle(cornerRadius: 8).fill(SettingsTheme.pair(black: 0.05, white: 0.06)) }
+        }
+        .overlay(alignment: .top) {
+            if !first { SettingsTheme.separator.frame(height: 1).padding(.horizontal, 12) }
+        }
+    }
+
+    private func rowLine(_ battery: BatteryModel, line: UsageSparkline?, sparklines: Bool) -> some View {
         let detail = AccountListText.detail(battery, usage: env.usage)
         return HStack(spacing: 12) {
             UsageBatteryView(battery: battery, now: env.usage.now, theme: theme)
@@ -108,16 +133,7 @@ struct AccountListView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             action(battery)
         }
-        .font(.system(size: 12.5))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .frame(minHeight: 36)
-        .background {
-            if battery.id == selected { RoundedRectangle(cornerRadius: 8).fill(SettingsTheme.pair(black: 0.05, white: 0.06)) }
-        }
-        .overlay(alignment: .top) {
-            if !first { SettingsTheme.separator.frame(height: 1).padding(.horizontal, 12) }
-        }
+        .frame(minHeight: 28)
     }
 
     @ViewBuilder private func action(_ battery: BatteryModel) -> some View {
@@ -126,6 +142,11 @@ struct AccountListView: View {
             AccountListButton(title: "Sign In", tint: SettingsTheme.accent, ink: .white, size: 12, horizontalPadding: 9) {
                 onClose()
                 env.actions.openSettings(.accounts)
+            }
+        case .loginLapsed:
+            // The owner's click only: a terminal window running Codex in this login's folder (P1551).
+            AccountListButton(title: BatteryView.refreshLoginTitle, tint: SettingsTheme.accent, ink: .white, size: 12, horizontalPadding: 9) {
+                env.usage.refreshLogin(battery.id)
             }
         case .signingIn:
             AccountListButton(title: "Cancel", size: 12, horizontalPadding: 9) {}
@@ -198,6 +219,8 @@ enum AccountListText {
         // Its dimmed battery says "No plan" or "No limits"; the detail says only what may be behind it.
         case .noPlan: return ("subscription ended?", .secondary)
         case .noLimits: return ("billed by usage", .secondary)
+        // Never "rate limited" (P1550): the row is tight, so the short form; the hover and the hint say the rest.
+        case .loginLapsed: return (Rules.loginLapsedShort, .amber)
         case .stale: return ((parts.first ?? "last reading") + " · stale", .amber)
         case .available, .usedUp:
             if let runOut = battery.runOut {

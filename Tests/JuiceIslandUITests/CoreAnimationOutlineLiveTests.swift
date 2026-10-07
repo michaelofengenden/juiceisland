@@ -19,9 +19,10 @@ struct CoreAnimationOutlineLiveTests {
     // MARK: Sampling what Core Animation draws
 
     /// Reads, on its own thread about every millisecond, the outline's presentation (its height and width) and the edge
-    /// line carrier's lift.
+    /// line carrier's lift. Each read keeps the clock before it (`t`) and after it (`end`): the presentation is of some
+    /// moment between the two, and a thread preempted between them (a loaded Mac's) read it milliseconds after `t`.
     final class Sampler: @unchecked Sendable {
-        struct Sample { var t: TimeInterval; var w: CGFloat; var h: CGFloat; var rim: CGFloat }
+        struct Sample { var t: TimeInterval; var end: TimeInterval; var w: CGFloat; var h: CGFloat; var rim: CGFloat }
         private let lock = NSLock()
         private var samples: [Sample] = []
         private var running = true
@@ -46,10 +47,11 @@ struct CoreAnimationOutlineLiveTests {
                     let t = ProcessInfo.processInfo.systemUptime
                     let box = clip.presentation()?.path?.boundingBoxOfPath
                     let lift = rim?.presentation()?.sublayerTransform.m42 ?? 0
+                    let end = ProcessInfo.processInfo.systemUptime
                     CATransaction.flush()
                     if let box {
                         lock.lock()
-                        samples.append(Sample(t: t, w: box.width, h: box.height, rim: lift))
+                        samples.append(Sample(t: t, end: end, w: box.width, h: box.height, rim: lift))
                         lock.unlock()
                     }
                     usleep(1000)
@@ -83,7 +85,7 @@ struct CoreAnimationOutlineLiveTests {
     static func committed(_ samples: [Sampler.Sample], rig: FramePerf.IslandRig, log: PlanLog) -> [Sampler.Sample] {
         let ends = rig.probe.turns.map { Double($0.end) / 1e9 }
         let windows = log.plans.map { install in (install.at - 0.001, ends.first(where: { $0 >= install.at }) ?? install.at + 0.03) }
-        return samples.filter { s in !windows.contains { s.t >= $0.0 && s.t <= $0.1 + 0.0005 } }
+        return samples.filter { s in !windows.contains { s.end >= $0.0 && s.t <= $0.1 + 0.0005 } }
     }
 
     struct Stall: CustomStringConvertible {
@@ -109,10 +111,15 @@ struct CoreAnimationOutlineLiveTests {
             } else {
                 run = s
             }
-            if s.t >= stall.0, s.t <= stall.1 + 0.06 { lag = max(lag, abs(s.h - m.0.height)) }
+            // Held against the model anywhere the read could have been (`t` to `end`): a read preempted after its clock
+            // showed a lag of more than a point that the drawing never had (P1262).
+            if s.t >= stall.0, s.t <= stall.1 + 0.06 {
+                let read = stride(from: s.t, through: max(s.t, s.end), by: 0.0002).compactMap { log.model(at: $0)?.0.height }
+                lag = max(lag, read.map { abs(s.h - $0) }.min() ?? abs(s.h - m.0.height))
+            }
             // The sample's clock and the transaction's can stand a fraction of a millisecond apart, a point at the
             // lift's fastest: the lift is held against the plan anywhere within 2 ms of the read (a quarter of a frame).
-            let near = stride(from: -0.002, through: 0.002, by: 0.0002).compactMap { log.model(at: s.t + $0)?.1 }
+            let near = stride(from: s.t - 0.002, through: max(s.t, s.end) + 0.002, by: 0.0002).compactMap { log.model(at: $0)?.1 }
             rim = max(rim, near.map { abs(s.rim - $0) }.min() ?? abs(s.rim - m.1))
         }
         return Stall(frozenMS: frozen * 1000, lag: lag, rimOff: rim, samples: samples.count)
@@ -128,6 +135,31 @@ struct CoreAnimationOutlineLiveTests {
         }
         while span.1 == 0 { try? await Task.sleep(for: .milliseconds(2)) }
         return span
+    }
+
+    /// Waits until the island rests and its layers hold no animation (`FramePerf.settle`: looks counted, not seconds): a
+    /// set wait of 0.8 to 1.8 s ended, in a full run, with the motion's jobs or the sweep after it still queued behind
+    /// the other suites' work on the main actor (P1258). A motion that never ends, or a layer never swept, still fails:
+    /// its wait looks in vain.
+    @discardableResult
+    static func rested(_ rig: FramePerf.IslandRig) async -> Bool {
+        let layers = rig.canvas.layers
+        return await FramePerf.settle(rig) {
+            let outline: [CALayer] = [layers.fill, layers.clip] + [layers.rim].compactMap { $0 }
+            return !rig.director.model.inMotion && outline.allSatisfy { $0.animationKeys() == nil }
+        }
+    }
+
+    /// Runs `body` in a run-loop turn of its own (`FramePerf.inTurn`), as an event would arrive, and waits until it ran and
+    /// the island rests again (`rested`).
+    static func step(_ rig: FramePerf.IslandRig, _ body: @escaping @MainActor () -> Void) async {
+        var ran = false
+        FramePerf.inTurn {
+            body()
+            ran = true
+        }
+        await Looks.until(30) { ran }
+        await rested(rig)
     }
 
     static func rig(_ outline: IslandOutline, glyph: GlyphStyle = .liquid, tuning: MotionTuning = MotionTuning()) async -> (FramePerf.IslandRig, PlanLog) {
@@ -291,8 +323,7 @@ struct CoreAnimationOutlineLiveTests {
             rig.canvas.layers.onInstall = { _, _ in }
             for step in [{ rig.open() }, { rig.present(.card(sessionID: FixtureSessionFeed.ID.approval)) }, { rig.present(.list) },
                          { rig.director.send(.close(.fold)) }, { rig.director.send(.swell(true)) }, { rig.director.send(.swell(false)) }] as [@MainActor () -> Void] {
-                FramePerf.inTurn(step)
-                await FramePerf.wait(0.7)
+                await Self.step(rig, step)
                 let cpu = rig.canvas.layers.lastPlayCPU
                 plays.append(cpu.plan + cpu.install)
                 parts.append(String(format: "%.2f+%.2f", cpu.plan, cpu.install))
@@ -318,13 +349,13 @@ struct CoreAnimationOutlineLiveTests {
         _ = NSApplication.shared
         let (rig, _) = await Self.rig(.coreAnimation)
         rig.open()
-        await FramePerf.wait(1.8)
+        #expect(await Self.rested(rig), "the open never came to rest")
         let layers = rig.canvas.layers
         #expect(layers.fill.animationKeys() == nil && layers.clip.animationKeys() == nil && layers.rim?.animationKeys() == nil)
         #expect(!rig.director.model.inMotion)
         #expect(layers.fill.path == layers.path(rig.director.model.restGeometry))
         rig.director.send(.close(.fold))
-        await FramePerf.wait(1.8)
+        #expect(await Self.rested(rig), "the fold never came to rest")
         #expect(layers.fill.animationKeys() == nil && layers.clip.animationKeys() == nil && layers.rim?.animationKeys() == nil)
         #expect(layers.fill.path == layers.path(rig.director.model.restGeometry))
         #expect(layers.rim?.sublayerTransform.m42 == 0)
@@ -351,7 +382,7 @@ struct CoreAnimationOutlineLiveTests {
         // What the black draws, at rest and open, against the model's outline.
         for step in [{}, { rig.open() }] as [@MainActor () -> Void] {
             step()
-            await FramePerf.wait(1.6)
+            await Self.rested(rig)
             let outside = Self.blackOutside(canvas: canvas, expected: rig.director.model.restGeometry)
             #expect(outside.outside == 0 && outside.inside > 1000, "\(outside)")
         }
@@ -407,7 +438,7 @@ struct CoreAnimationOutlineLiveTests {
         canvas.rimCarrier?.wantsLayer = false
         let repairs = canvas.repairs
         rig.open()
-        await FramePerf.wait(1.2)
+        await Self.rested(rig)
         #expect(!sound.isEmpty && sound.allSatisfy { $0 })
         #expect(canvas.repairs > repairs)
         #expect(surface.layer === surface.root && layers.fill.superlayer === surface.root && masked.layer?.mask === layers.clip)
@@ -432,12 +463,21 @@ struct CoreAnimationOutlineLiveTests {
         }
     }
 
+    /// Whether `layer` plays its outline's animation now: one past its end draws its last sample, which is the layer's
+    /// own path, and is no motion (P1436).
+    static func playing(_ layer: CALayer) -> Bool {
+        guard let animation = layer.animation(forKey: IslandSurfaceLayers.key) else { return false }
+        return layer.convertTime(CACurrentMediaTime(), from: nil) < animation.beginTime + animation.duration
+    }
+
     /// A display change: the canvas takes its new size and the model snaps to its rest there; the layers follow, masked,
     /// the black the new rest's outline. A scale change puts the shape layers at the display's scale.
     @Test func aDisplayOrScaleChangeKeepsTheLayers() async throws {
         _ = NSApplication.shared
         let (rig, _) = await Self.rig(.coreAnimation)
         let canvas = rig.canvas, layers = canvas.layers
+        // From rest, then mid-open: the pill's own arrival, late under load, is no part of it (P1258).
+        await Self.rested(rig)
         rig.open()
         await FramePerf.wait(0.1)
         // A taller display mid-open.
@@ -449,7 +489,11 @@ struct CoreAnimationOutlineLiveTests {
         #expect(layers.fill.frame.size == size && layers.clip.frame.size == size)
         #expect(canvas.maskedView?.frame.size == size && canvas.surfaceView?.frame.size == size)
         #expect(canvas.maskedView?.layer?.mask === layers.clip)
-        #expect(layers.fill.animationKeys() == nil && layers.fill.path == layers.path(rig.director.model.restGeometry))
+        // Nothing plays: an open that ended before the change (under load, the 0.1 s wait can outlast it) may still
+        // hold its finished animation, which draws its last sample, the layer's own path, until the sweep takes it
+        // off a moment after its end, later under load (P1436).
+        #expect(!Self.playing(layers.fill) && layers.fill.path == layers.path(rig.director.model.restGeometry),
+                "keys \(layers.fill.animationKeys() ?? []), in motion \(rig.director.model.inMotion), \(rig.director.model.surface)")
         let outside = Self.blackOutside(canvas: canvas, expected: rig.director.model.restGeometry)
         #expect(outside.outside == 0 && outside.inside > 1000, "\(outside)")
         // The display's scale.
@@ -468,9 +512,9 @@ struct CoreAnimationOutlineLiveTests {
         let (rig, _) = await Self.rig(.coreAnimation)
         let canvas = rig.canvas, layers = canvas.layers
         rig.open()
-        await FramePerf.wait(0.8)
+        await Self.rested(rig)
         rig.director.send(.hide)
-        await FramePerf.wait(1.2)
+        await Self.rested(rig)
         #expect(!rig.director.model.inMotion)
         #expect(layers.fill.path == layers.path(rig.director.model.restGeometry))
         // Window mode: the content goes; Island: a fresh model at the idle rest, then the pill.
@@ -480,7 +524,7 @@ struct CoreAnimationOutlineLiveTests {
         rig.director.reset(Model(metrics: .init(targets: targets, outline: .coreAnimation), ordered: false, at: IslandMotionDirector.now))
         rig.director.send(.show)
         rig.director.send(.pill(DIslandMotionTests.referencePill))
-        await FramePerf.wait(1.2)
+        await Self.rested(rig)
         #expect(canvas.outline == .coreAnimation && canvas.maskedView?.layer?.mask === layers.clip)
         #expect(layers.fill.superlayer === canvas.surfaceView?.root)
         #expect(layers.fill.animationKeys() == nil && layers.fill.path == layers.path(rig.director.model.restGeometry))
@@ -508,8 +552,8 @@ struct CoreAnimationOutlineLiveTests {
         }
         for step in [{ rig.open() }, { rig.present(.card(sessionID: FixtureSessionFeed.ID.approval)) }, { rig.present(.list) },
                      { rig.director.send(.close(.fold)) }, { rig.director.send(.swell(true)) }, { rig.director.send(.swell(false)) }] as [@MainActor () -> Void] {
-            FramePerf.inTurn(step)
-            await FramePerf.wait(0.8)
+            // Each step from the last one's rest: under load a set 0.8 s ran steps into each other and their snaps into one.
+            await Self.step(rig, step)
         }
         rig.afterSnap = nil
         print("snaps \(checked), unsound \(unsound), black beyond the panel by at most \(worst) pt")

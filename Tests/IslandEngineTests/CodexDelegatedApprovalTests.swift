@@ -5,7 +5,7 @@ import Testing
 
 /// P733: a Codex chat that handed its work to a subagent (its own turn ended while the subagent runs, P513), and that
 /// subagent's approval. The request keeps its own context and owner: it waits on the chat's row under the subagent's
-/// role with the subagent's command; with Answer Codex on the island on it is still never held (only a main-thread call
+/// role with the subagent's command; with Answer Codex in Juice on it is still never held (only a main-thread call
 /// is, P470), so no island answer can reach the subagent's call as the chat's; the chat's own call with the same command
 /// and its output leave it, and only the subagent's own rollout closes it. The chat's status follows: it needs you while
 /// the request waits, then waits on its agent again, never running and never done, with no Done sound. Fictional ids

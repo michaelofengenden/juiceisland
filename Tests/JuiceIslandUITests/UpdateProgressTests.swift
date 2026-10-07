@@ -221,9 +221,12 @@ struct UpdateProgressTests {
                                            logFile: root.appendingPathComponent("logs/update.log"))
             try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
-            let body = "#!/bin/zsh\nset -u\nstatus_to() { print -r -- \"$1\" >> \"$JI_STATUS_FILE\" }\nself=\"$0\" go_file=\"$0.go\"\n"
-                + "step() { local end=$(( SECONDS + 90 )); until [[ -e \"$go_file\" ]] || (( SECONDS > end )); do "
-                + "[[ -e \"$self\" ]] || exit 0; sleep 0.02; done; rm -f \"$go_file\" }\nprint -r -- \"stub started\"\n" + script + "\n"
+            // A step waits for its go file however long the test takes (P1253), until the sandbox or the test process
+            // is gone.
+            let body = "#!/bin/zsh\nset -u\nstatus_to() { print -r -- \"$1\" >> \"$JI_STATUS_FILE\" }\n"
+                + "self=\"$0\" go_file=\"$0.go\" runner=$PPID\n"
+                + "step() { until [[ -e \"$go_file\" ]]; do [[ -e \"$self\" ]] && kill -0 $runner 2>/dev/null || exit 0; "
+                + "sleep 0.02; done; rm -f \"$go_file\" }\nprint -r -- \"stub started\"\n" + script + "\n"
             try body.write(to: self.script, atomically: true, encoding: .utf8)
         }
 
@@ -247,10 +250,9 @@ struct UpdateProgressTests {
         var now = Date(timeIntervalSince1970: 1_790_000_000)
     }
 
+    /// Waits until `done` holds, for 60 s worth of looks at most (`Looks`, P1253).
     private func wait(until done: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(60)
-        while Date() < deadline, !done() { try? await Task.sleep(for: .milliseconds(10)) }
-        return done()
+        await Looks.until(60, done)
     }
 
     /// The fill follows the states; inside the build, the time on the test's clock against the log's estimate; past

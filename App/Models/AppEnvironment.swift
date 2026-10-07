@@ -1,4 +1,5 @@
 import Foundation
+import IslandEngine
 import JuiceCore
 import Observation
 
@@ -37,6 +38,10 @@ struct AppActions {
     var resetPanelPosition: @MainActor () -> Void = {}
     /// Settings › About › Show welcome (P951).
     var showWelcome: @MainActor () -> Void = {}
+    /// A session was sent to the island and its terminal said where its window is (in the Dock now, or stayed for its
+    /// other tabs): the fold's motion from there into the pill (`WindowFold.flyIn`, P1302, P1360). Renders and tests
+    /// play nothing.
+    var foldIn: @MainActor (TuckBounds) -> Void = { _ in }
 }
 
 /// Everything a view binds to, injected once at the root with `.environment(env)` and read with
@@ -243,6 +248,22 @@ final class AppEnvironment {
                 self.observeUsageSource()
             }
         }
+    }
+
+    /// Send to island, on the owner's click or key (a row's menu or hover button, the island's S, the system-wide key):
+    /// the session folds, and when its terminal said where its window is, its motion plays into the pill (P1300, P1302,
+    /// P1360). Island mode only: in Window mode there is no island to send it to.
+    func sendToIsland(_ sessionID: String) {
+        guard settings.showAs == .island else { return }
+        let sessions = sessions, foldIn = actions.foldIn
+        Task { @MainActor in
+            if let bounds = await sessions.sendToIsland(sessionID) { foldIn(bounds) }
+        }
+    }
+
+    /// Whether `row` offers Send to island here: its tab is known, it is not folded yet, and the island is what shows.
+    func offersSendToIsland(_ row: SessionRow) -> Bool {
+        row.canFold && !row.isFolded && settings.showAs == .island
     }
 
     /// A card by its id: the island's quota notice (`QuotaNoticeCard.prefix`), else a session's (`SessionsModel.card`).

@@ -43,6 +43,10 @@ extension EnvironmentValues {
     /// Inside Glass look Widget's glass (`GlassLookFace`, P879): an ink with a Widget twin draws it. False everywhere
     /// else (the window, Settings, Solid, Light and dark), so they draw as before.
     @Entry var glassWidgetInk = false
+    /// Inside Glass look Widget's glass on the desktop while macOS dims its widgets (`WidgetGlassState.dimmed`, P1227):
+    /// every ink with a Widget twin draws white at its own strength (the marks, a low battery's amber, a red amount), as
+    /// the dimmed widgets beside the panel tint theirs. False everywhere else.
+    @Entry var glassWidgetMono = false
 }
 
 /// The twins of an adaptive colour, as a colour SwiftUI resolves itself (`ShapeStyle.resolve(in:)`): a read of the
@@ -57,7 +61,10 @@ private struct AdaptivePair: ShapeStyle, Hashable {
 
     func resolve(in environment: EnvironmentValues) -> Color.Resolved {
         guard environment.colorScheme == .dark else { return light }
-        if let widget, environment.glassWidgetInk { return widget }
+        if let widget, environment.glassWidgetInk {
+            guard environment.glassWidgetMono else { return widget }
+            return Color.Resolved(red: 1, green: 1, blue: 1, opacity: widget.opacity)
+        }
         return dark
     }
 }

@@ -39,6 +39,9 @@ final class LiveSessions: SessionsModel {
     @ObservationIgnored private var retryObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private let makeDemo: @MainActor () -> any SessionsModel
     @ObservationIgnored private let makeEngine: @MainActor () -> SessionEngine
+    @ObservationIgnored private let makeResumer: @MainActor (SessionEngine) -> SessionResumer
+    @ObservationIgnored private let makeBackgrounder: @MainActor (SessionEngine) -> ClaudeBackgrounder
+    @ObservationIgnored private let makeHandoff: @MainActor (SessionEngine) -> SessionHandoff
     @ObservationIgnored private let loadProfiles: @MainActor () -> LiveProfiles
     @ObservationIgnored private let sounds: any SoundPlaying
     /// The screen is locked or the owner's session switched out (`ScreenLockWatch.isAway`): Quiet while locked holds the
@@ -49,15 +52,24 @@ final class LiveSessions: SessionsModel {
     @ObservationIgnored private let scene: @MainActor () -> QuietScene
     /// Made on the first switch-on and kept: upstream's process monitor has no stop, so a new engine would add another.
     @ObservationIgnored private(set) var engine: SessionEngine?
+    /// A folded session's replies once its tab is gone (route b, P1325): made with the engine and kept with it. Its runs
+    /// end when the app quits or the switch goes off.
+    @ObservationIgnored private(set) var resumer: SessionResumer?
+    /// Claude Code's own background sessions (wave 8, P1450 on): made with the engine and kept with it.
+    @ObservationIgnored private(set) var backgrounder: ClaudeBackgrounder?
     @ObservationIgnored private var aliases: [String: String] = [:]
     @ObservationIgnored private var observing = false
     /// Every signal the live engine let out, after its sound: Window mode's banners (P412).
     @ObservationIgnored var onReleased: (@MainActor (EngineSignal) -> Void)?
 
     /// `sounds` plays the signals: the app passes the system's player, and everything else plays nothing. `away`: the
-    /// app's lock watch; `scene`: its quiet scenes.
+    /// app's lock watch; `scene`: its quiet scenes. `resumer`: the engine's route (b) (tests give one whose runs and
+    /// windows are stand-ins).
     init(settings: AppSettings, demo: @escaping @MainActor () -> any SessionsModel,
          engine: @escaping @MainActor () -> SessionEngine = { SessionEngine() },
+         resumer: @escaping @MainActor (SessionEngine) -> SessionResumer = { SessionResumer(engine: $0) },
+         backgrounder: @escaping @MainActor (SessionEngine) -> ClaudeBackgrounder = { ClaudeBackgrounder(engine: $0) },
+         handoff: @escaping @MainActor (SessionEngine) -> SessionHandoff = { SessionHandoff(engine: $0) },
          profiles: @escaping @MainActor () -> LiveProfiles = { LiveProfiles.load() },
          identity: AppIdentity = .development, sounds: any SoundPlaying = SilentSoundPlayer(),
          away: @escaping @MainActor () -> Bool = { false }, scene: @escaping @MainActor () -> QuietScene = { .none }) {
@@ -65,6 +77,9 @@ final class LiveSessions: SessionsModel {
         self.identity = identity
         makeDemo = demo
         makeEngine = engine
+        makeResumer = resumer
+        makeBackgrounder = backgrounder
+        makeHandoff = handoff
         loadProfiles = profiles
         self.sounds = sounds
         self.away = away
@@ -85,6 +100,7 @@ final class LiveSessions: SessionsModel {
         observeScriptedRunsSwitch()
         observeSubagentSwitch()
         observeModeChoicesSwitch()
+        observeKeepRunningSwitch()
         guard identity == .production else { return }
         let center = NSWorkspace.shared.notificationCenter
         retryObservers = [NSWorkspace.didTerminateApplicationNotification, NSWorkspace.didWakeNotification].map { name in
@@ -106,8 +122,9 @@ final class LiveSessions: SessionsModel {
     /// The hooks reach this app: live, and no other app took the hook socket since (`BridgeHealth.taken`).
     var hooksReachApp: Bool { mode == .live && engine?.bridgeHealth != .taken }
 
-    /// Quitting: the bridge stops; the switch keeps its setting.
+    /// Quitting: the island's resume runs end and the bridge stops; the switch keeps its setting.
     func shutdown() {
+        resumer?.endAll()
         engine?.stop()
         for observer in retryObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         retryObservers = []
@@ -119,6 +136,7 @@ final class LiveSessions: SessionsModel {
             if mode == .demo { goLive() }
         } else {
             guard mode == .live else { return }
+            resumer?.endAll()
             engine?.stop()
             mode = .demo
             demo = identity.showsDemoSessions ? makeDemo() : nil
@@ -191,7 +209,7 @@ final class LiveSessions: SessionsModel {
         }
     }
 
-    /// Answer subagents on the island and Answer Codex on the island, applied to the engine as they or Show as change. A
+    /// Answer subagents on the island and Answer Codex in Juice, applied to the engine as they or Show as change. A
     /// subagent's hold is the island's alone, so in Window mode every subagent request is handed back at once (P350); a
     /// Codex hold waits on the window's Needs you card there as it waits on the island's card in Island mode (P470, P1050).
     private func observeSubagentSwitch() {
@@ -247,7 +265,22 @@ final class LiveSessions: SessionsModel {
         engine.answersSubagents = Self.answersSubagents(settings)
         engine.offersModeChoices = settings.modeChoicesOnCards
         engine.answersCodex = Self.answersCodex(settings)
+        engine.keepsClaudeRunning = settings.keepClaudeRunning
         self.engine = engine
+        let firstStart = backgrounder == nil
+        if backgrounder == nil {
+            let backgrounder = makeBackgrounder(engine)
+            self.backgrounder = backgrounder
+            engine.claudeBackground = backgrounder
+        }
+        if resumer == nil {
+            let resumer = makeResumer(engine)
+            self.resumer = resumer
+            // A folded card whose tab is gone goes on through it (contract R7).
+            engine.conversationResume = resumer
+        }
+        // Open in Claude, Codex or another agent's app, and back (P1510): made with the engine and kept with it.
+        if engine.appHandoff == nil { engine.appHandoff = makeHandoff(engine) }
         let profiles = loadProfiles()
         aliases = Dictionary(profiles.accounts.map { ($0.id, $0.alias) }, uniquingKeysWith: { first, _ in first })
         engine.setProfiles(accounts: profiles.accounts, discovered: profiles.discovered)
@@ -267,6 +300,16 @@ final class LiveSessions: SessionsModel {
         }
         demo = nil
         mode = .live
+        // At launch, the background sessions of each profile whose supervisor ran there (P1458): reads only.
+        if firstStart { Task { await engine.readBackgroundAtLaunch() } }
+    }
+
+    /// Settings › Agents › Keep Claude sessions running when their window closes, as it changes (P1450).
+    private func observeKeepRunningSwitch() {
+        engine?.keepsClaudeRunning = settings.keepClaudeRunning
+        withObservationTracking { _ = settings.keepClaudeRunning } onChange: { [weak self] in
+            Task { @MainActor in self?.observeKeepRunningSwitch() }
+        }
     }
 
     static func refusalText(for error: any Error) -> String {
@@ -313,6 +356,16 @@ final class LiveSessions: SessionsModel {
     func islandShows(requestID: String?) { current?.islandShows(requestID: requestID) }
     func windowShows(requestIDs: Set<String>) { current?.windowShows(requestIDs: requestIDs) }
     func openFresh(_ sessionID: String, in alternative: LimitAlternative) { current?.openFresh(sessionID, in: alternative) }
+    var folded: [FoldedCardModel] { current?.folded ?? [] }
+    func sendToIsland(_ sessionID: String) async -> TuckBounds? { await current?.sendToIsland(sessionID) }
+    func frontmostFoldable() async -> String? { await current?.frontmostFoldable() }
+    func replyFolded(_ sessionID: String, text: String) { current?.replyFolded(sessionID, text: text) }
+    func cancelHeld(_ sessionID: String) { current?.cancelHeld(sessionID) }
+    func retryFolded(_ sessionID: String) { current?.retryFolded(sessionID) }
+    func stopFolded(_ sessionID: String) { current?.stopFolded(sessionID) }
+    func continueFolded(_ sessionID: String) { current?.continueFolded(sessionID) }
+    func openFolded(_ sessionID: String) { current?.openFolded(sessionID) }
+    func unfold(_ sessionID: String) { current?.unfold(sessionID) }
     var jumpNote: JumpNote? { current?.jumpNote }
     var finishSource: FinishSource {
         if let showcase { return showcase.finishSource }

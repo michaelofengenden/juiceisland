@@ -125,6 +125,7 @@ struct CleanUsageView: View {
             ForEach(IslandUsageRows.rows(usage, inUse: inUse, first: env.settings.usageFirst)) { row in
                 IslandBatteryRow(row: row, now: usage.now, hover: hover, inUse: inUse)
             }
+            .environment(\.panelActions, .island(env: env))
             if !fitted.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: CleanMoneyLayout.itemGap) {
                     ForEach(fitted) { item in IslandMoneyItem(row: item, hovered: hover == .money(item.id)) }
@@ -163,6 +164,7 @@ struct DetailedUsageView: View {
                     IslandBatteryRow(row: row, now: usage.now, hover: hover, inUse: inUse)
                 }
             }
+            .environment(\.panelActions, .island(env: env))
             if showsMoney {
                 MoneyRowsView(rows: usage.shownMoney(env.settings), width: Self.moneyWidth(contentWidth: size.contentWidth), palette: theme.panel)
                     .padding(.top, 8)
@@ -173,6 +175,15 @@ struct DetailedUsageView: View {
         .frame(width: size.contentWidth,
                height: IslandTheme.Metrics.detailedUsageHeight(money: showsMoney, moneyCount: usage.shownMoney(env.settings).count),
                alignment: .topLeading)
+    }
+}
+
+extension PanelActions {
+    /// The island's batteries' menus: Refresh login on a lapsed Codex login (P1551), on the owner's click; the rest as
+    /// they were.
+    @MainActor
+    static func island(env: AppEnvironment) -> PanelActions {
+        PanelActions(refreshLogin: { id in env.usage.refreshLogin(id) })
     }
 }
 

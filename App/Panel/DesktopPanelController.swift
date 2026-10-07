@@ -3,7 +3,8 @@ import Observation
 
 /// Shows the desktop panel per Settings › Desktop Panel, in either mode (Juice Island spec §4.3, §4.5):
 /// - Show on desktop shows or hides it (Settings' switch, the menu bar icon's item, the usage block's menu and the
-///   panel's own Hide write the same setting); a panel with nothing to draw is not shown.
+///   panel's own Hide write the same setting); a panel with nothing to draw is not shown. Use the widget instead keeps
+///   it hidden whatever Show on desktop says: the Usage widget takes its place (P1226), in a build that feeds it (P1280).
 /// - Lock position decides whether a drag on it moves it.
 /// - Display and Corner place it; Reset Position forgets where it was left on its display.
 /// - A drag is remembered per display, and the display it was left on becomes the chosen one.
@@ -68,6 +69,12 @@ final class DesktopPanelController {
 
     func screensChanged() { apply() }
 
+    /// Whether the panel shows (`AppSettings.panelShown`, spelled out here where it acts): Show on desktop, unless Use the
+    /// widget instead gives its place to the Usage widget (P1226), which only a build that feeds the widget does (P1280).
+    private var shown: Bool {
+        env.settings.panelShowOnDesktop && !(env.settings.panelUseWidget && env.settings.widgetFed)
+    }
+
     /// Brings the window in line with the settings and the usage model. Idempotent: it moves the panel only when its
     /// place changed (a display, the corner, a reset, the panel's size), never on a new reading alone.
     func apply() {
@@ -75,7 +82,7 @@ final class DesktopPanelController {
         let content = DesktopPanelContent.make(usage: env.usage, settings: settings)
         if let corner = appliedCorner, corner != settings.panelCorner { store.forgetAll() }
         appliedCorner = settings.panelCorner
-        guard settings.panelShowOnDesktop, let size = content.size,
+        guard shown, let size = content.size,
               let frame = PanelPlacement.desiredFrame(panelSize: size, screens: screens(), preferredID: settings.panelDisplay,
                                                       corner: settings.panelCorner, store: store) else {
             surface?.hide()
@@ -132,7 +139,7 @@ final class DesktopPanelController {
         guard started else { return }
         // The panel's dots follow the accounts in use while it is on (P814): the watch starts here, before the panel
         // shows and outside the tracking below, so its first make adds nothing to what that tracking follows.
-        env.watchAccountsInUse(env.settings.panelShowOnDesktop)
+        env.watchAccountsInUse(shown)
         withObservationTracking {
             apply()
         } onChange: { [weak self] in

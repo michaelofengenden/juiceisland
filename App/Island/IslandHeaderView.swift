@@ -222,6 +222,9 @@ struct HeaderStripPair: View {
     /// Mark, gap, one battery cell, and the padding each side.
     static var width: CGFloat { markSize + gap + Theme.Battery.cellWidth + 2 * padding }
 
+    /// What its battery's menu acts on: the island's (Refresh login on a lapsed login, P1551).
+    @MainActor static func batteryActions(env: AppEnvironment) -> PanelActions { .island(env: env) }
+
     /// The battery the strip shows: under In use the first account in use (P812), else the Next one (else the first that
     /// is not No plan or No limits, P360, P581, else the first), without its Next bar.
     static func battery(_ row: ProviderRowModel, inUse: AccountsInUse = .none, first: UsageFirst = .next) -> BatteryModel? {
@@ -239,6 +242,7 @@ struct HeaderStripPair: View {
                     ProviderMarkView(provider: row.provider, size: Self.markSize, theme: theme)
                     BatteryView(battery: battery, now: env.usage.now, theme: theme)
                         .environment(\.hoverReporter) { _ in }
+                        .environment(\.panelActions, Self.batteryActions(env: env))
                 }
                 .padding(.horizontal, Self.padding)
                 .padding(.vertical, 3)

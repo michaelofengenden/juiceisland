@@ -19,8 +19,9 @@ enum WidgetGlassState: String, Sendable {
     /// ours inside it, the wallpaper's own colour (the closest public glass to the widgets', P1205), white ink lifted by
     /// a soft shadow (`WidgetInkLift`, P1206); Frost lays the dark ground only as far as the owner asks.
     case fullColour
-    /// On the desktop, an app in front: the widgets dimmed. The same glass a tenth deeper
-    /// (`GlassFrost.widgetDimmedFloor`), the wallpaper's colour still through it, the same lifted ink (P1214).
+    /// On the desktop, an app in front: the widgets dimmed. The same glass as full colour, the wallpaper's colour through
+    /// it, the same lift, and every ink and mark white (`\.glassWidgetMono`), as the dimmed widgets tint their content
+    /// (P1227).
     case dimmed
     /// Over the apps' windows: the island, and whatever does not say (the Settings preview, the renders). Widget as it
     /// was (P870 to P879): the dark face under Frost's dark ground from its floor, which holds white ink over a white

@@ -55,8 +55,27 @@ extension SessionEngine {
         setScope(SessionScopeRules.codex(rollout, originator: state.scopeOriginator, hand: codexHands[sessionID]), for: sessionID)
     }
 
-    /// Only a change is written: the lists observe `scopes`.
+    /// The owner went on with the session from its folded card (`SessionResumer`): it is theirs from now on, whatever
+    /// the run's notes say of their entrypoint (`claude -p` says `sdk-cli`), and a scripted verdict it had before is
+    /// dropped, as they chose to reply (P1327). While the run lasts, its approvals are held for the island (P1328).
+    func islandRunStarted(_ sessionID: String) {
+        islandResumes.start(sessionID)
+        if scopes[sessionID] == .scripted { setScope(.owner, for: sessionID) }
+    }
+
+    /// The run's process exited: a reply the card held for it gets its check now (P1306), since a process's end is no
+    /// event of the state's and a long run outlasts the held reply's own looks.
+    /// `heldElsewhere`: Codex refused it, as another process still writes the thread (P1440).
+    func islandRunEnded(_ sessionID: String, heldElsewhere: Bool = false) {
+        islandResumes.end(sessionID)
+        if heldElsewhere { foldResumeHeld(sessionID) }
+        foldsFollowState()
+    }
+
+    /// Only a change is written: the lists observe `scopes`. A session the owner went on with from the island is never
+    /// a scripted run again (P1327); a child stays a child.
     private func setScope(_ scope: SessionScope, for sessionID: String) {
+        let scope = scope == .scripted && islandResumes.wasResumed(sessionID) ? .owner : scope
         let stored: SessionScope? = scope == .owner ? nil : scope
         guard scopes[sessionID] != stored else { return }
         scopes[sessionID] = stored

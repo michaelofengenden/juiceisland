@@ -18,6 +18,7 @@ struct ShortcutsPane: View {
         ("Move through sessions", "↑ ↓"),
         ("Open a card or jump", "Return"),
         ("Step through the island's usage", "U"),
+        ("Send a session to the island", "S"),
         ("Switch Window and Island", "⌘⇧I"),
         ("Close a card or menu", "Esc"),
     ]
@@ -95,7 +96,7 @@ struct ShortcutsPane: View {
                     KeyCap(text: keys.optionsDisplay)
                 }
                 ForEach(Self.localKeys, id: \.0) { item in
-                    FormRow(item.0, dimmed: !keys.enabled && item.1 == "U") { KeyCap(text: item.1) }
+                    FormRow(item.0, dimmed: !keys.enabled && (item.1 == "U" || item.1 == "S")) { KeyCap(text: item.1) }
                 }
             }
             // One row: the key, then the switch. Off with no key until one is recorded; nothing is registered while
@@ -112,8 +113,9 @@ struct ShortcutsPane: View {
                 }
                 if Self.showsAction(combo: combo, enabled: settings.globalJumpEnabled) {
                     FormRow("Action", subtitle: settings.globalKeyAction.detail, dimmed: !keys.enabled) {
-                        SettingsSegmented(selection: $settings.globalKeyAction,
-                                          options: GlobalKeyAction.allCases.map { ($0, $0.title) }, label: "System-wide key's action")
+                        // Four choices are too wide for a segmented control beside the row's name: a pop-up (P1309).
+                        SettingsPopup(selection: $settings.globalKeyAction,
+                                      options: GlobalKeyAction.allCases.map { ($0, $0.title) }, label: "System-wide key's action")
                     }
                 }
             }

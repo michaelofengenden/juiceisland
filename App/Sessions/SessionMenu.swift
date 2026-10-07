@@ -8,15 +8,20 @@ import SwiftUI
 /// Claude approval or plan the island holds, which it answers No and stop (⌃⇧D, the request the menu was built for,
 /// P170). A running session has no safe stop (the engine never signals an agent's process), so it has none (P320).
 /// A session stopped on its usage limit offers its card's other account under the jump ("Open in lab", P707), so the
-/// row keeps it when the card folded away, never opened or was dismissed.
+/// row keeps it when the card folded away, never opened or was dismissed. A session whose tab is known offers Send to
+/// island in Island mode (P1300). A session its agent's own app can take offers that ("Open in Claude", P1510).
 enum SessionMenuItem: Equatable, Sendable {
-    case jump, copyTitle, copyFolder, openFolder, archive, stop
+    case jump, sendToIsland, copyTitle, copyFolder, openFolder, archive, stop
     case openIn(LimitAlternative)
+    /// Open in Claude, Codex or another agent's app: its title.
+    case openInApp(String)
 
     var title: String {
         switch self {
         case .jump: "Jump to session"
+        case .sendToIsland: "Send to island"
         case let .openIn(alternative): alternative.action
+        case let .openInApp(title): title
         case .copyTitle: "Copy title"
         case .copyFolder: "Copy folder path"
         case .openFolder: "Open in Finder"
@@ -29,12 +34,15 @@ enum SessionMenuItem: Equatable, Sendable {
 enum SessionMenuModel {
     /// The menu's groups, a divider between each; a group with nothing in it is left out, so a row with no folder and
     /// nothing to archive or stop has two. `alternative`: the other account the row's limit offers (`alternative(_:logins:)`).
-    static func groups(_ row: SessionRow, card: SessionCard?, alternative: LimitAlternative? = nil) -> [[SessionMenuItem]] {
+    /// `sends`: Send to island is offered (`AppEnvironment.offersSendToIsland`).
+    static func groups(_ row: SessionRow, card: SessionCard?, alternative: LimitAlternative? = nil, sends: Bool = false) -> [[SessionMenuItem]] {
         let folder: [SessionMenuItem] = row.folder == nil ? [] : [.copyFolder, .openFolder]
         var last: [SessionMenuItem] = []
         if row.canArchive { last.append(.archive) }
         if stop(card) != nil { last.append(.stop) }
-        return [[.jump] + (alternative.map { [.openIn($0)] } ?? []), [.copyTitle] + folder, last].filter { !$0.isEmpty }
+        let first: [SessionMenuItem] = [.jump] + (sends ? [.sendToIsland] : []) + (row.appOffer.map { [.openInApp($0)] } ?? [])
+            + (alternative.map { [.openIn($0)] } ?? [])
+        return [first, [.copyTitle] + folder, last].filter { !$0.isEmpty }
     }
 
     /// The best other account for a row stopped on its usage limit while it holds, as its card offers it (P704, P707).
@@ -72,11 +80,15 @@ struct SessionMenuPerformer {
     var pasteboard: NSPasteboard = .general
     /// A new Finder window rooted at the folder (never `open`, which would launch a folder that is a bundle).
     var openFolder: @MainActor (String) -> Void = { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: $0) }
+    /// Send to island: the environment's, which plays the fold's motion (`AppEnvironment.sendToIsland`).
+    var sendToIsland: @MainActor (String) -> Void = { _ in }
 
     func perform(_ item: SessionMenuItem, row: SessionRow, card: SessionCard?) {
         switch item {
         case .jump:
             jump(row.id)
+        case .sendToIsland:
+            if row.canFold, !row.isFolded { sendToIsland(row.id) }
         case .copyTitle:
             copy(row.task)
         case .copyFolder:
@@ -91,6 +103,8 @@ struct SessionMenuPerformer {
             sessions.approve(target.sessionID, .denyAndStop, request: target.request)
         case let .openIn(alternative):
             sessions.openFresh(row.id, in: alternative)
+        case .openInApp:
+            if row.appOffer != nil { sessions.openInApp(row.id) }
         }
     }
 
@@ -108,9 +122,11 @@ struct SessionMenu: View {
 
     var body: some View {
         let card = env.sessions.card(for: row.id)
-        let performer = SessionMenuPerformer(sessions: env.sessions, jump: surfaceJump ?? { [sessions = env.sessions] in sessions.jump($0) })
+        let performer = SessionMenuPerformer(sessions: env.sessions, jump: surfaceJump ?? { [sessions = env.sessions] in sessions.jump($0) },
+                                             sendToIsland: { [env] in env.sendToIsland($0) })
         let groups = SessionMenuModel.groups(row, card: card,
-                                             alternative: SessionMenuModel.alternative(row, logins: env.usage.logins))
+                                             alternative: SessionMenuModel.alternative(row, logins: env.usage.logins),
+                                             sends: env.offersSendToIsland(row))
         ForEach(groups.indices, id: \.self) { index in
             if index > 0 { Divider() }
             ForEach(groups[index], id: \.title) { item in

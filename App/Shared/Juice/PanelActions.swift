@@ -9,6 +9,9 @@ struct PanelActions: Sendable {
     /// The email of the account a battery draws (`UsageModel.email(of:)`); nil leaves Copy email out of its menu.
     var email: @MainActor @Sendable (String) -> String? = { _ in nil }
     var signIn: @MainActor @Sendable (String) -> Void = { _ in }
+    /// Refresh login on a lapsed Codex login's battery (P1551): the usage model's `refreshLogin`, on the owner's click.
+    /// Nil where a surface opens nothing, and then its battery's menu offers no Refresh login (`BatteryView.firstMenuItem`).
+    var refreshLogin: (@MainActor @Sendable (String) -> Void)?
     var manageAccount: @MainActor @Sendable (String) -> Void = { _ in }
     var refreshSource: @MainActor @Sendable (String) -> Void = { _ in }
     /// Whether Refresh source can read that source now (the usage model's `canRefreshMoney`); false where nothing reads.

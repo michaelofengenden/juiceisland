@@ -86,9 +86,14 @@ enum UsageMenus {
     @ViewBuilder
     static func target(_ target: HoverTargetID, provider: Provider, account: String?, env: AppEnvironment) -> some View {
         if let account, let battery = env.usage.battery(id: account) {
-            let refresh = AccountRefreshMenu.item(account, usage: env.usage, now: Date())
-            Button(refresh.title) { env.usage.refreshAccount(account) }
-                .disabled(!refresh.isEnabled)
+            // A lapsed login (P1551): Codex refreshes it, on this click; its reads follow by themselves.
+            if battery.state == .loginLapsed {
+                Button(BatteryView.refreshLoginTitle) { env.usage.refreshLogin(account) }
+            } else {
+                let refresh = AccountRefreshMenu.item(account, usage: env.usage, now: Date())
+                Button(refresh.title) { env.usage.refreshAccount(account) }
+                    .disabled(!refresh.isEnabled)
+            }
             if let email = env.usage.email(of: account) {
                 Button("Copy email") {
                     NSPasteboard.general.clearContents()
@@ -177,7 +182,7 @@ enum UsageBackgroundMenu {
         let other: ShowAs = showing == .window ? .island : .window
         return [
             refresh,
-            Item(title: "Desktop panel", isOn: settings.panelShowOnDesktop, action: .toggleDesktopPanel),
+            Item(title: "Desktop panel", isOn: settings.panelShown, action: .toggleDesktopPanel),
             nil,
             Item(title: other == .island ? "Show as Island" : "Show as Window", key: "i", action: .showAs(other)),
             Item(title: "Settings…", action: .settings),
@@ -187,7 +192,7 @@ enum UsageBackgroundMenu {
     static func perform(_ action: Action, env: AppEnvironment) {
         switch action {
         case .refreshAll: env.usage.refreshAll()
-        case .toggleDesktopPanel: env.settings.panelShowOnDesktop.toggle()
+        case .toggleDesktopPanel: env.settings.togglePanelShown()
         case let .showAs(mode): env.actions.setShowAs(mode)
         case .settings: env.actions.openSettings(.accounts)
         }

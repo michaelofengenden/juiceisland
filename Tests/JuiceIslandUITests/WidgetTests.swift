@@ -287,11 +287,11 @@ struct WidgetTests {
             asked.append(group)
             return WidgetStore(directory: folder)
         }
-        #expect(WidgetFeed.app(env: env, identity: nil, team: "TEAMID0000", store: store, reload: {}) == nil)
-        #expect(WidgetFeed.app(env: env, identity: identity, team: nil, store: store, reload: {}) == nil)
-        #expect(WidgetFeed.app(env: env, identity: identity, team: "ABCDE12345", store: store, reload: {}) == nil)
+        #expect(WidgetFeed.app(env: env, identity: nil, team: "TEAMID0000", store: store, reload: { _ in }) == nil)
+        #expect(WidgetFeed.app(env: env, identity: identity, team: nil, store: store, reload: { _ in }) == nil)
+        #expect(WidgetFeed.app(env: env, identity: identity, team: "ABCDE12345", store: store, reload: { _ in }) == nil)
         #expect(asked.isEmpty)
-        #expect(WidgetFeed.app(env: env, identity: identity, team: "TEAMID0000", store: store, reload: {}) != nil)
+        #expect(WidgetFeed.app(env: env, identity: identity, team: "TEAMID0000", store: store, reload: { _ in }) != nil)
         #expect(asked == ["TEAMID0000.com.ofengenden.juice.dev"])
     }
 
@@ -334,11 +334,11 @@ struct WidgetTests {
         let env = AppEnvironment(settings: .ephemeral(), usage: DemoUsageModel(now: Self.now), sessions: stub)
         var clock = Self.now
         let reloads = ReloadCounter()
-        let feed = WidgetFeed(env: env, store: store, clock: { clock }, reload: { reloads.bump() })
+        let feed = WidgetFeed(env: env, store: store, clock: { clock }, reload: { reloads.bump($0) })
 
         feed.start()
         feed.drain()
-        #expect(reloads.count == 1)
+        #expect(reloads.of(.sessions) == 1 && reloads.of(.usage) == 1)
         #expect(store.read()?.rows.map(\.id) == ["ask", "run"])
 
         // The running row's tool moves on: nothing the widget draws changed, so nothing is written.
@@ -347,7 +347,7 @@ struct WidgetTests {
         clock += 10
         feed.changed()
         feed.drain()
-        #expect(reloads.count == 1)
+        #expect(reloads.count == 2)
         #expect(try FileManager.default.attributesOfItem(atPath: store.file.path)[.modificationDate] as? Date == written)
 
         // Another session starts a turn: written at once, reloaded after the floor.
@@ -356,21 +356,21 @@ struct WidgetTests {
         feed.changed()
         feed.drain()
         #expect(store.read()?.rows.map(\.id) == ["ask", "run", "run2"])
-        #expect(reloads.count == 1)
-        #expect(feed.reloadPending)
+        #expect(reloads.count == 2)
+        #expect(feed.reloadPending(.sessions) && !feed.reloadPending(.usage), "a session reloads no battery")
 
         // A request is answered: at once, and the waiting reload is no longer needed.
         stub.rows.removeFirst()
         clock += 10
         feed.changed()
         feed.drain()
-        #expect(reloads.count == 2)
-        #expect(!feed.reloadPending)
+        #expect(reloads.of(.sessions) == 2 && reloads.of(.usage) == 1)
+        #expect(!feed.reloadPending(.sessions))
         #expect(store.read()?.rows.map(\.id) == ["run", "run2"])
 
-        // Quit: the closed snapshot is on disk when `stop` returns.
+        // Quit: the closed snapshot is on disk when `stop` returns, and both kinds reload.
         feed.stop()
-        #expect(reloads.count == 3)
+        #expect(reloads.of(.sessions) == 3 && reloads.of(.usage) == 2)
         #expect(store.read()?.appRunning == false)
         #expect(store.read()?.rows.isEmpty == true)
     }
@@ -381,7 +381,7 @@ struct WidgetTests {
         let store = WidgetStore(directory: folder)
         let stub = DStub(rows: [DStub.row("run", .codex, .running)])
         let env = AppEnvironment(settings: .ephemeral(), usage: DemoUsageModel(now: Self.now), sessions: stub)
-        let feed = WidgetFeed(env: env, store: store, reload: {})
+        let feed = WidgetFeed(env: env, store: store, reload: { _ in })
         feed.start()
         stub.rows.insert(DStub.row("ask", .claude, .needsYou, glyph: .ques), at: 0)
         for _ in 0..<100 where feed.last?.rows.count != 2 { try await Task.sleep(for: .milliseconds(10)) }
@@ -481,10 +481,11 @@ struct WidgetTests {
     }
 }
 
-/// Counts reloads from the feed's queue.
+/// Counts reloads from the feed's queue, all of them and each kind's.
 final class ReloadCounter: @unchecked Sendable {
     private let lock = NSLock()
-    private var value = 0
-    var count: Int { lock.withLock { value } }
-    func bump() { lock.withLock { value += 1 } }
+    private var kinds: [WidgetKind] = []
+    var count: Int { lock.withLock { kinds.count } }
+    func of(_ kind: WidgetKind) -> Int { lock.withLock { kinds.filter { $0 == kind }.count } }
+    func bump(_ kind: WidgetKind) { lock.withLock { kinds.append(kind) } }
 }

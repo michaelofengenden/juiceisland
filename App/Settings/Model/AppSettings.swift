@@ -44,6 +44,7 @@ final class AppSettings {
         static let showScriptedRuns = "ji.island.showScriptedRuns"
         static let answerSubagents = "ji.island.answerSubagents"
         static let answerCodex = "ji.island.answerCodex"
+        static let keepClaudeRunning = "ji.agents.keepClaudeRunning"
         static let sessionPeek = "ji.island.sessionPeek"
         static let stalledAfter = "ji.island.stalledAfter"
         static let islandDisplay = "ji.island.display"
@@ -75,9 +76,11 @@ final class AppSettings {
         static let shortcutModifier = "ji.shortcuts.modifier"
         static let recordedCardKeys = "ji.shortcuts.cardKeys"
         static let panelShowOnDesktop = "ji.panel.showOnDesktop"
+        static let panelUseWidget = "ji.panel.useWidget"
         static let panelLocked = "ji.panel.locked"
         static let panelDisplay = "ji.panel.display"
         static let panelCorner = "ji.panel.corner"
+        static let widgetBackground = "ji.widget.background"
         static let runwayAmberHours = "ji.money.runwayAmberHours"
         static let runwayRedHours = "ji.money.runwayRedHours"
         static func moneyShown(_ id: MoneyAccount) -> String { "ji.money.shown.\(id.rawValue)" }
@@ -186,6 +189,10 @@ final class AppSettings {
     /// auto reviewer takes it (P470). Off: every Codex card is read-only (decision 15). In Window mode the window's Needs
     /// you card holds it the same way (P1050).
     var answerCodexOnIsland: Bool { didSet { save(answerCodexOnIsland, Key.answerCodex) } }
+    /// Settings › Agents › Keep Claude sessions running when their window closes (wave 8, P1450, P1470): Send to island
+    /// moves a Claude Code session into Claude Code's own background (`/background` typed into its tab), and a Claude session
+    /// Juice starts (Open in <account>, the welcome's Start) starts there and opens attached. On.
+    var keepClaudeRunning: Bool { didSet { save(keepClaudeRunning, Key.keepClaudeRunning) } }
     /// A row the pointer rests on shows its last prompt, its reply and, in Clean, its model, mode and progress in the
     /// island (P311). On.
     var sessionPeek: Bool { didSet { save(sessionPeek, Key.sessionPeek) } }
@@ -260,10 +267,40 @@ final class AppSettings {
 
     // MARK: Desktop panel
     var panelShowOnDesktop: Bool { didSet { save(panelShowOnDesktop, Key.panelShowOnDesktop) } }
+    /// Settings › Desktop Panel › Use the widget instead (P1226): the Usage widget takes the panel's place, and the panel
+    /// stays hidden whatever Show on desktop says, in a build that feeds its widgets (`widgetFed`, P1280). Off until
+    /// set: the first launch of such a build turns it on only when a Usage widget is placed (`PanelWidgetChoice`, P1281),
+    /// as the owner's is (it kept its kind, P1220), so an update never hides the panel of someone who never added the
+    /// widget. WidgetKit cannot tell the app whether that widget is on the desktop or in Notification Center.
+    var panelUseWidget: Bool { didSet { save(panelUseWidget, Key.panelUseWidget) } }
+    /// Whether Use the widget instead was ever set here, by the owner or by that first launch's look (P1281).
+    var panelUseWidgetSet: Bool { defaults?.object(forKey: Key.panelUseWidget) != nil }
+    /// Whether this build feeds its widgets (`WidgetFeed.app` runs: a build signed by the App Group's team), set at launch
+    /// and never saved. In any other (ad hoc: every dev build, a --prod one with no signing identity, a copy built from
+    /// source) the widget can only say "Not running", so the panel never gives it its place (P1280).
+    var widgetFed = false
+    /// Whether the panel gives its place to the Usage widget.
+    var panelGivesWay: Bool { panelUseWidget && widgetFed }
+    /// Whether the desktop panel shows: Show on desktop, unless the widget takes its place.
+    var panelShown: Bool { panelShowOnDesktop && !panelGivesWay }
+
+    /// Shows or hides the panel from a menu (the menu bar icon's, the usage block's): showing it gives the panel its
+    /// place back from the widget (P1226); where the widget never took it (P1280), the switch stays as the owner set it.
+    func togglePanelShown() {
+        if panelShown {
+            panelShowOnDesktop = false
+        } else {
+            if panelGivesWay { panelUseWidget = false }
+            panelShowOnDesktop = true
+        }
+    }
     var panelLocked: Bool { didSet { save(panelLocked, Key.panelLocked) } }
     var panelDisplay: String? { didSet { save(panelDisplay, Key.panelDisplay) } }
     /// Where the panel starts and where Reset Position puts it (Juice spec §2.6: bottom right).
     var panelCorner: PanelCorner { didSet { save(panelCorner.rawValue, Key.panelCorner) } }
+    /// Settings › Desktop Panel › Widget background (P1401): what both widgets stand on in full colour, Glass (the
+    /// system's own, nothing of ours) or Black (the island's pure black). The widgets read it from the snapshot.
+    var widgetBackground: WidgetBackgroundChoice { didSet { save(widgetBackground.rawValue, Key.widgetBackground) } }
 
     // MARK: Money
     /// Settings › Money › Show, per account (`OpenRouter`, `OpenRouter 2`); on unless switched off.
@@ -398,6 +435,7 @@ final class AppSettings {
         showScriptedRuns = bool(Key.showScriptedRuns, false)
         answerSubagentsOnIsland = bool(Key.answerSubagents, false)
         answerCodexOnIsland = bool(Key.answerCodex, false)
+        keepClaudeRunning = bool(Key.keepClaudeRunning, true)
         sessionPeek = bool(Key.sessionPeek, true)
         stalledAfter = choice(Key.stalledAfter, StallLimit.tenMinutes)
         archiveIdleAfter = choice(Key.archiveIdleAfter, ArchiveAfter.threeDays)
@@ -432,9 +470,12 @@ final class AppSettings {
         shortcutModifier = choice(Key.shortcutModifier, ShortcutModifier.control)
         recordedCardKeys = CardKeys.decode(defaults?.dictionary(forKey: Key.recordedCardKeys))
         panelShowOnDesktop = bool(Key.panelShowOnDesktop, true)
+        // Off until set: the first launch that feeds the widget decides it from the widgets placed (P1281).
+        panelUseWidget = bool(Key.panelUseWidget, false)
         panelLocked = bool(Key.panelLocked, true)
         panelDisplay = string(Key.panelDisplay)
         panelCorner = choice(Key.panelCorner, PanelCorner.bottomRight)
+        widgetBackground = choice(Key.widgetBackground, WidgetBackgroundChoice.glass)
         moneyShown = Dictionary(uniqueKeysWithValues: MoneyAccount.allCases.map { ($0, bool(Key.moneyShown($0), true)) })
         runwayAmberHours = int(Key.runwayAmberHours, 72)
         runwayRedHours = int(Key.runwayRedHours, 24)

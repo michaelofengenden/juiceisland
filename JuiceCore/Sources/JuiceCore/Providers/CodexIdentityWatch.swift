@@ -14,6 +14,11 @@ public struct AuthFileStamp: Sendable, Equatable, Hashable {
         self.modifiedNanoseconds = modifiedNanoseconds
     }
 
+    /// When the file last changed: a lapsed Codex login (`Rules.loginLapsed`, P1550) is told by it.
+    public var modified: Date {
+        Date(timeIntervalSince1970: TimeInterval(modifiedSeconds) + TimeInterval(modifiedNanoseconds) / 1_000_000_000)
+    }
+
     /// `stat` of `<folder>/auth.json`, following a symlink to the file it names; nil when it cannot be stat-ed, which
     /// in practice means there is none.
     public static func of(folder: String) -> AuthFileStamp? {

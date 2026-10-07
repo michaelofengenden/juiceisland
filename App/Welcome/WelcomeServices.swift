@@ -41,7 +41,14 @@ final class LiveWelcomeServices: WelcomeServices {
     func askOpenIslandToQuit() { SingleIslandGuard.askOpenIslandToQuit() }
 
     func start(command: String, folder: String?) async -> Bool {
-        await FreshSessionLaunch.openLive(.firstSession(command: command, host: host, folder: folder))
+        var launch = FreshSessionLaunch.firstSession(command: command, host: host, folder: folder)
+        // Claude Code starts in its own background and the window attaches, so closing it leaves the session running
+        // (Settings › Agents, P1470); the plain command when that cannot start.
+        if command == "claude", settings.keepClaudeRunning {
+            launch.line = await ClaudeBackgroundStart.liveLine(folder: launch.folder, profile: NSHomeDirectory() + "/.claude",
+                                                              fallback: launch.line)
+        }
+        return await FreshSessionLaunch.openLive(launch)
     }
 
     func copy(_ text: String) {

@@ -115,10 +115,10 @@ struct InUseRenders {
                                      size: CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin), date: WidgetRenders.now)
                         .padding(margin)
                         .frame(width: size.width, height: size.height)
-                        .background { WidgetBackground() }
+                        .background { WidgetBackdrop(choice: .glass) }
                         .clipShape(shape)
                         .containerShape(shape)
-                        .modifier(WidgetInkScheme(scheme: IslandWidgetEntryView.inkScheme(snapshot, .fullColor)))
+                        .modifier(SessionsWidgetInk(fullColour: true))
                         .padding(24)
                 }
                 .frame(width: size.width + 48, height: size.height + 48)

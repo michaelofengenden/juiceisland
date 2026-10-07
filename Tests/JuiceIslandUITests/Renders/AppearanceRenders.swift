@@ -137,9 +137,12 @@ struct AppearanceRenders {
     }
 
     /// `view`'s pixels at 2x, RGBA, row by row.
-    static func bitmap<V: View>(_ view: V, size: CGSize, env: AppEnvironment, scheme: ColorScheme) throws -> [UInt8] {
+    /// `clock`: the moment every glyph draws (`GlyphClock`), so two renders a moment apart draw the same frame; nil, the
+    /// glyphs' own timelines, at the moment each render runs.
+    static func bitmap<V: View>(_ view: V, size: CGSize, env: AppEnvironment, scheme: ColorScheme,
+                                clock: GlyphClock? = nil) throws -> [UInt8] {
         let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height).environment(env)
-            .environment(\.colorScheme, scheme).environment(\.glassRendering, .standIn))
+            .environment(\.colorScheme, scheme).environment(\.glassRendering, .standIn).environment(\.glyphClock, clock))
         renderer.scale = 2
         let image = try #require(renderer.cgImage)
         var data = [UInt8](repeating: 0, count: image.width * image.height * 4)

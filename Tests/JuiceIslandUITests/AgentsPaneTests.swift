@@ -244,7 +244,7 @@ struct AgentsPaneTests {
         #expect(model.notFound == ["Qwen Code", "Devin", "Kilo"])
     }
 
-    /// Codex is Approve only while the app answers it: Answer Codex on the island (P947), in either mode, since the
+    /// Codex is Approve only while the app answers it: Answer Codex in Juice (P947), in either mode, since the
     /// window's Needs you card holds it too (P1050).
     @Test func codexIsApproveOnlyWhileTheIslandAnswersIt() {
         let env = AppEnvironment.demo()

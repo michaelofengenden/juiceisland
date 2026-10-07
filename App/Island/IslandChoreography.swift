@@ -5,6 +5,8 @@ import SwiftUI
 /// A part of the opened island that comes into focus on its own.
 enum PartID: Hashable, Sendable {
     case usage, row(String), codexGroup, footer, empty, cardHeader, cardBody
+    /// The folded sessions' conversation cards over the rows (P1307).
+    case folded
     /// The header and body of the card another session's card took the place of, fading out in a layer of their own.
     case leavingHeader, leavingBody
     /// A card built ahead of showing, while another shows: no channel ever brings it in (P133).

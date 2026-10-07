@@ -285,9 +285,7 @@ extension SessionEngine {
     func settleRestoredWaits() {
         for session in state.sessions where session.phase.requiresAttention
             && session.permissionRequest == nil && session.questionPrompt == nil {
-            state.apply(.sessionCompleted(SessionCompleted(sessionID: session.id, summary: Self.restartedSummary,
-                                                           timestamp: session.updatedAt, isInterrupt: true)))
-            interruptedSessionIDs.insert(session.id)
+            applyOwnInterrupt(session.id, summary: Self.restartedSummary, at: session.updatedAt)
         }
     }
 

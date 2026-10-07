@@ -82,8 +82,9 @@ enum WidgetMetrics {
 
 /// The widget (spec §4.7): the island's opened card on the desktop. Needs you first (the glyph, the agent's mark in its
 /// colour, the chat's title, and the card's status line: "Needs approval · Bash", "Question"), then what runs (glyph,
-/// mark, title), then the Claude and Codex batteries. On the island's surface, Black or Glass (`WidgetBackground`), in
-/// that theme's greys; nothing moves (glyphs are still).
+/// mark, title), then the Claude and Codex batteries. On the widgets' background (`WidgetBackdrop`), in the palette the
+/// entry view gives it (`SessionsWidgetInk`: Glass look Widget's white twins in full colour, P1224); nothing moves
+/// (glyphs are still).
 /// With the desktop's tinted or vibrant look (`tinted`), the system takes the surface away and draws in one colour, so
 /// every state is also a shape: "!", "?" and "×" for what needs you, the equalizer for what runs, and the battery's own
 /// shapes (P346). Each row of the medium and large faces is a link to its session (`WidgetLink`); the small face is one
@@ -173,8 +174,6 @@ struct IslandWidgetView: View {
             .padding(.top, M.batteryGap)
         case let .full(scale):
             WidgetBatteryBlock(snapshot: snapshot, date: date, tinted: tinted)
-                // The panel's battery draws in its own colours; one colour in the tinted look, as the rest.
-                .grayscale(tinted ? 1 : 0)
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(width: WidgetBatteryBlock.naturalWidth * scale,
                        height: WidgetBatteryBlock.height([snapshot.claude, snapshot.codex].filter { !$0.isEmpty }.count) * scale,
@@ -326,10 +325,10 @@ struct WidgetBatteryBlock: View {
             ForEach(rows, id: \.0) { provider, batteries in
                 HStack(spacing: Self.markGap) {
                     ProviderMarkView(provider: provider, size: Self.markSize, tint: tinted ? .white : nil, theme: theme)
+                    // The Usage widget's battery: the panel's, drawn with nothing a widget cannot draw (P1225).
                     HStack(spacing: Theme.Battery.gap) {
-                        ForEach(Array(batteries.enumerated()), id: \.offset) { index, battery in
-                            BatteryView(battery: battery.model(index, provider: provider), now: date, theme: tinted ? .black : theme,
-                                        inUse: battery.showsInUse)
+                        ForEach(Array(batteries.enumerated()), id: \.offset) { _, battery in
+                            UsageBattery(battery: battery, date: date, ink: UsageInk(mono: tinted))
                         }
                     }
                 }
@@ -337,9 +336,6 @@ struct WidgetBatteryBlock: View {
             }
         }
         .frame(width: Self.naturalWidth, alignment: .leading)
-        // The system's looks draw Black's batteries in either theme: no glass well or knocked-out cut under the one
-        // colour (P542, P545).
-        .transformEnvironment(\.juiceTheme) { if tinted { $0 = .black } }
     }
 }
 
@@ -410,7 +406,7 @@ struct MiniBattery: View {
                 RoundedRectangle(cornerRadius: 2.5).fill(track)
                     .overlay(RoundedRectangle(cornerRadius: 2.5)
                         .strokeBorder(line, style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [0.01, 2.2])))
-            case .signIn, .signingIn:
+            case .signIn, .signingIn, .loginLapsed:
                 RoundedRectangle(cornerRadius: 2.5).strokeBorder(line, style: StrokeStyle(lineWidth: 1, dash: [1.5, 1.5]))
             }
         }

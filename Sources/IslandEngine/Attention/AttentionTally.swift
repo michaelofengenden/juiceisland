@@ -40,7 +40,7 @@ public struct AttentionTally: Equatable, Sendable {
     /// Subagents' requests held for the island (Answer subagents on the island, P350) whose hold ended with no decision,
     /// by why: `timeUp`, `notShown`, `hidden`, `opened`, `switchedOff`, `brokerEnded`.
     public var subagentHolds: [String: Int] = [:]
-    /// Codex requests held for the island (Answer Codex on the island, P470) that ended with no decision, by why: the
+    /// Codex requests held for the island (Answer Codex in Juice, P470) that ended with no decision, by why: the
     /// hold's ends as `subagentHolds`, and `focused`, `reviewer`, `unknownReviewer`, `hookEnded`, `switchedOff`,
     /// `notEntered`, `late` for one handed back before its card.
     public var codexHolds: [String: Int] = [:]

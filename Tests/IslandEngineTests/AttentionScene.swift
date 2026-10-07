@@ -145,7 +145,7 @@ final class AttentionScene {
         let line = HookRequestLine(source: source, input: input, digest: object["tool_input"].flatMap(HookInputDigest.of),
                                    entrypoint: entrypoint, agentPID: pid, hostBundleID: host, hasTerminal: terminal)
         // As the broker replies: with Answer subagents on the island on, a subagent's tool approval is held too, bounded
-        // (P350); with Answer Codex on the island on, a Codex shell command or patch (P470).
+        // (P350); with Answer Codex in Juice on, a Codex shell command or patch (P470).
         let hold = AttentionPolicy.brokerHold(line, object, answersSubagents: engine.answersSubagents, answersCodex: engine.answersCodex)
         let id = UUID().uuidString
         if hold.held { broker.held.update { _ = $0.insert(id) } }

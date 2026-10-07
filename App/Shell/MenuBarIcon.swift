@@ -35,7 +35,7 @@ enum StatusMenu {
         }
         return providers + (providers.isEmpty ? [] : [nil]) + [
             refresh,
-            Item(title: "Show on desktop", isOn: settings.panelShowOnDesktop, action: .toggleDesktopPanel),
+            Item(title: "Show on desktop", isOn: settings.panelShown, action: .toggleDesktopPanel),
             Item(title: "Lock position", isOn: settings.panelLocked, action: .toggleLock),
             nil,
             Item(title: "Settings…", key: ",", action: .settings),
@@ -47,7 +47,7 @@ enum StatusMenu {
         switch action {
         case .accounts: env.actions.openSettings(.accounts)
         case .refreshAll: env.usage.refreshAll()
-        case .toggleDesktopPanel: env.settings.panelShowOnDesktop.toggle()
+        case .toggleDesktopPanel: env.settings.togglePanelShown()
         case .toggleLock: env.settings.panelLocked.toggle()
         case .settings: env.actions.openSettings(.general)
         case .quit: env.actions.quit()

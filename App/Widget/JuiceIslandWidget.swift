@@ -1,12 +1,14 @@
 import SwiftUI
 import WidgetKit
 
-/// The desktop and Notification Center widget (spec §4.7), in its extension (`Widget/`, the Xcode target
-/// `JuiceIslandWidget`). It reads the App Group's snapshot and nothing else: no socket, no engine, no network, no file
-/// outside the container. A timeline is the snapshot now, and the same snapshot again at each used-up battery's refill,
-/// so it flips to "due" with no reload (P347); the app asks for a reload when the snapshot changes (`WidgetFeed`).
+/// The sessions widget (spec §4.7), second in the gallery after the Usage widget (`JuiceIslandUsageWidget`), in the same
+/// extension (`Widget/`, the Xcode target `JuiceIslandWidget`). It reads the App Group's snapshot and nothing else: no
+/// socket, no engine, no network, no file outside the container. A timeline is the snapshot now, and the same snapshot
+/// again at each used-up battery's refill, so it flips to "due" with no reload (P347); the app asks for a reload when
+/// what it draws changes (`WidgetFeed`). Its kind is its own since wave A5: the app's first widget's kind is the Usage
+/// widget's now, so one already on the desktop shows the batteries (P1220).
 public struct JuiceIslandWidget: Widget {
-    public static let kind = "JuiceIslandWidget"
+    public static let kind = WidgetKind.sessions.rawValue
 
     public init() {}
 
@@ -14,8 +16,8 @@ public struct JuiceIslandWidget: Widget {
         StaticConfiguration(kind: Self.kind, provider: IslandWidgetProvider()) { entry in
             IslandWidgetEntryView(entry: entry)
         }
-        .configurationDisplayName(Product.name)
-        .description("What needs you, what runs, and what is left.")
+        .configurationDisplayName("Sessions")
+        .description("What needs you, and what runs.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -24,6 +26,9 @@ struct IslandWidgetEntry: TimelineEntry {
     var date: Date
     var snapshot: WidgetSnapshot?
     var scheme: String?
+
+    /// What it stands on (P1401): the snapshot's choice, Glass with none.
+    var background: WidgetBackgroundChoice { snapshot?.backgroundChoice ?? .glass }
 }
 
 struct IslandWidgetProvider: TimelineProvider {
@@ -57,9 +62,10 @@ struct IslandWidgetProvider: TimelineProvider {
     }
 }
 
-/// One entry in its family and look: the snapshot's theme behind it (`WidgetBackground`: the island's pure black, or
-/// Glass), taken away by the system in the desktop's tinted, clear or vibrant look, where the view draws in one colour,
-/// the same in either theme (P346, P542). A tap outside the rows (the small face: anywhere) opens the first row, or the
+/// One entry in its family and the system's rendering, as the Usage widget's (P1224): full colour on the background the
+/// owner chose (`WidgetBackdrop`, P1401), whatever the island's theme, its ink Glass look Widget's white twins and lifted
+/// (`SessionsWidgetInk`); in the desktop's tinted, clear or vibrant looks the system takes that background away and the
+/// view draws in one colour (P346, P542). A tap outside the rows (the small face: anywhere) opens the first row, or the
 /// island (`WidgetLink.open`).
 struct IslandWidgetEntryView: View {
     let entry: IslandWidgetEntry
@@ -71,31 +77,12 @@ struct IslandWidgetEntryView: View {
         GeometryReader { proxy in
             IslandWidgetView(snapshot: entry.snapshot, face: Self.face(family), size: proxy.size, date: entry.date,
                              tinted: renderingMode != .fullColor, scheme: entry.scheme)
+                .modifier(SessionsWidgetInk(fullColour: renderingMode == .fullColor))
         }
-        .containerBackground(for: .widget) { WidgetBackground() }
+        // No environment of ours reaches the container background: WidgetKit draws it apart from the view (P1224), so the
+        // choice comes from the snapshot the App Group holds (P1401).
+        .containerBackground(for: .widget) { WidgetBackdrop(choice: entry.background) }
         .widgetURL(entry.scheme.flatMap { Self.tapLink(entry.snapshot, face: Self.face(family)).url(scheme: $0) })
-        // Glass in full colour is the island's light glass (`WidgetGlassBody`): its ink the light look's twins. Solid in
-        // full colour takes a pinned Appearance, its ground and its ink together (P777).
-        .modifier(WidgetInkScheme(scheme: Self.inkScheme(entry.snapshot, renderingMode)))
-        // The theme the app wrote (P525), outermost so the container's background sees it too: Black for an older file.
-        .environment(\.juiceTheme, entry.snapshot?.juiceTheme ?? .black)
-    }
-
-    /// Whether the content draws in the light scheme: Glass in full colour only (the system's looks draw one colour);
-    /// Solid's content takes the widget's own look, or the Appearance the app pins (`inkScheme`).
-    static func lightInk(_ theme: JuiceTheme, _ mode: WidgetRenderingMode) -> Bool { theme == .glass && mode == .fullColor }
-
-    /// The colour scheme the widget draws in, or nil for the widget's own (macOS's): Glass's light look in full colour;
-    /// Solid's pinned Appearance in full colour (Light or Dark; System is the widget's own); nothing else.
-    static func inkScheme(_ snapshot: WidgetSnapshot?, _ mode: WidgetRenderingMode) -> ColorScheme? {
-        let theme = snapshot?.juiceTheme ?? .black
-        if lightInk(theme, mode) { return .light }
-        guard theme == .solid, mode == .fullColor else { return nil }
-        return switch snapshot?.appearanceChoice ?? .system {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
     }
 
     static func face(_ family: WidgetFamily) -> WidgetFace {
@@ -138,11 +125,21 @@ extension WidgetSnapshot {
     }
 }
 
-/// The widget's content in the light scheme where it sits on Glass's light veil; untouched otherwise.
-struct WidgetInkScheme: ViewModifier {
-    let scheme: ColorScheme?
+/// The sessions widget's ink in full colour (P1224): the island's Glass look Widget, white twins on the dark look
+/// whatever the island's theme, the glyphs at their full colour, lifted as the Usage widget's ink is (`UsageInkLift`).
+/// The one-colour looks keep the view's own white (`tinted`) and draw no lift.
+struct SessionsWidgetInk: ViewModifier {
+    let fullColour: Bool
 
     func body(content: Content) -> some View {
-        if let scheme { content.environment(\.colorScheme, scheme) } else { content }
+        if fullColour {
+            content
+                .modifier(UsageInkLift(enabled: true))
+                .environment(\.juiceTheme, .glass)
+                .environment(\.colorScheme, .dark)
+                .environment(\.glassWidgetInk, true)
+        } else {
+            content.environment(\.juiceTheme, .black)
+        }
     }
 }

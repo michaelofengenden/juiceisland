@@ -167,8 +167,35 @@ enum FramePerf {
     }
 
     /// Lets the main run loop turn for `seconds`, the main actor free.
+    /// The moment every rig's held glyphs draw (`Rig.clock`).
+    static let heldMoment = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
     static func wait(_ seconds: TimeInterval) async {
         try? await Task.sleep(for: .seconds(seconds))
+    }
+
+    /// Lays `rig`'s window out and commits its layers now, as a display frame would: a window never on screen gets no
+    /// display frame, and under a full run's load the main run loop commits only between long drains of the main queue.
+    static func frame(_ rig: Rig) {
+        rig.window.contentView?.layoutSubtreeIfNeeded()
+        CATransaction.flush()
+    }
+
+    /// Waits until `settled`, a frame (`frame`) before each look, for `limit` seconds' worth of looks 50 ms apart
+    /// (`Looks`): a set wait on the clock ended, under load, with the motion or the layout it waited for not yet run,
+    /// and a wall-clock limit with few looks taken (P1258).
+    @discardableResult
+    static func settle(_ rig: Rig, limit: TimeInterval = 30, _ settled: () -> Bool) async -> Bool {
+        await Looks.until(limit, every: 0.05) {
+            frame(rig)
+            return settled()
+        }
+    }
+
+    /// Waits until the rig's island is at rest: no job left in its model (`IslandChoreography.inMotion`).
+    @discardableResult
+    static func rest(_ rig: IslandRig, limit: TimeInterval = 30) async -> Bool {
+        await settle(rig, limit: limit) { !rig.director.model.inMotion }
     }
 
     /// Runs `body` in a turn of the main run loop of its own, as an event would arrive.
@@ -265,15 +292,21 @@ enum FramePerf {
         let host: Host
         let window: NSWindow
         let probe: Probe
-        let clock = GlyphClock()
+        /// Held glyphs and edge lines draw its `start`, one moment for every rig: the moment a rig was made put Liquid's
+        /// edge line anywhere in its flow, so what a held line covered changed from run to run (P1259). Moving glyphs
+        /// draw `date`, which the rig's timer keeps at now.
+        let clock = GlyphClock(date: FramePerf.heldMoment)
         /// False holds the glyphs still (`SurfaceMotion(.hidden)`), for a check that runs beside the suites counting
         /// glyph frames (`GlyphFrames`).
         var glyphsMove = FramePerf.glyphsMove
         private var timer: Timer?
 
         /// `prepare`: more sessions fed to the engine before anything reads it (a scene the scenarios have not got).
+        /// `sessionsClock`: the sessions' clock (the wall clock unless a test pins it: each minute's turn redraws the rows,
+        /// and the island with them, P1261).
         init(style: IslandStyle, glyph: GlyphStyle, placement: UsagePlacement, scenario: FixtureSessionFeed.Scenario,
-             events: [AgentEvent], size: CGSize, host: Host? = nil, prepare: (FixtureSessionFeed) -> Void = { _ in }) {
+             events: [AgentEvent], size: CGSize, host: Host? = nil, sessionsClock: @escaping @MainActor () -> Date = { Date() },
+             prepare: (FixtureSessionFeed) -> Void = { _ in }) {
             let settings = AppSettings.ephemeral()
             settings.islandStyle = style
             settings.glyphStyle = glyph
@@ -283,7 +316,7 @@ enum FramePerf {
             prepare(feed)
             self.feed = feed
             env = AppEnvironment(settings: settings, usage: DemoUsageModel(now: Date()),
-                                 sessions: EngineSessionsModel(engine: feed.engine, clock: { Date() }))
+                                 sessions: EngineSessionsModel(engine: feed.engine, clock: sessionsClock))
             self.host = host ?? Host(rootView: AnyView(EmptyView()))
             window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: .darkAqua)
@@ -340,7 +373,7 @@ enum FramePerf {
              scenario: FixtureSessionFeed.Scenario = .allStates, events: [AgentEvent] = [], glyphsMove: Bool = FramePerf.glyphsMove,
              outline: IslandOutline = .swiftUI, tuning: MotionTuning = MotionTuning(), clock: any IslandJobClock = StrictJobClock(),
              theme: JuiceTheme = FramePerf.theme, stateTint: Bool = FramePerf.stateTint, glassLook: GlassLookChoice = .lightAndDark,
-             prepare: (FixtureSessionFeed) -> Void = { _ in }) {
+             sessionsClock: @escaping @MainActor () -> Date = { Date() }, prepare: (FixtureSessionFeed) -> Void = { _ in }) {
             let model = IslandChoreography(metrics: .init(targets: SurfaceTargets(notch: Self.notch, pill: .empty)), surface: .closed,
                                            at: clock.now)
             director = IslandMotionDirector(model: model, ui: ui, clock: clock)
@@ -353,7 +386,7 @@ enum FramePerf {
             host.autoresizingMask = []
             canvas = IslandCanvas(ui: ui, hosting: host, container: container, size: canvasSize)
             super.init(style: style, glyph: glyph, placement: placement, scenario: scenario, events: events,
-                       size: CGSize(width: 200, height: 40), host: host, prepare: prepare)
+                       size: CGSize(width: 200, height: 40), host: host, sessionsClock: sessionsClock, prepare: prepare)
             self.glyphsMove = glyphsMove
             // As the island's panel (`IslandPanel.configureKeyViewLoop`); `JI_MEASURE_KEYLOOP=auto` lets AppKit work the
             // loop out on every change, as before round A.

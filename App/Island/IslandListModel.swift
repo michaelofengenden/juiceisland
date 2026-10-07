@@ -190,9 +190,10 @@ struct IslandListLayout: Equatable {
     /// The rows hide one the Codex group does not show: the footer shows.
     var showsFooter: Bool { hidden.count > codexGroup.count }
 
+    /// A folded session is not among them: its conversation card stands for it above the rows (P1307).
     static func make(rows: [SessionRow], style: IslandStyle, showAll: Bool, now: Date,
                      visible: Int = IslandTheme.Metrics.visibleRows) -> IslandListLayout {
-        let rows = SessionListLayout.displayOrder(rows, now: now)
+        let rows = SessionListLayout.displayOrder(rows.filter { !$0.isFolded }, now: now)
         let limit = showAll ? rows.count : visible
         let shown = Array(rows.prefix(limit))
         let hidden = Array(rows.dropFirst(limit))

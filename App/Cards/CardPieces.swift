@@ -333,6 +333,9 @@ struct AnswerFieldView: View {
     var cancel: (() -> Void)?
     /// A subagent's request the island holds (P350): the time left runs along the field's foot, as along Yes's.
     var holdEnds: Date? = nil
+    /// Text that comes back into the field (a folded card's reply that did not go, P1356): put in once as it comes or
+    /// the field shows, ahead of anything typed since.
+    var refill: String? = nil
     let send: (String) -> Void
     @Environment(\.cardHovered) private var cardHovered
     @Environment(\.cardDraftReporter) private var reportDraft
@@ -340,6 +343,8 @@ struct AnswerFieldView: View {
     /// Settings › Island › Text size (P402); the standard size in the window.
     @Environment(\.islandSize) private var islandSize
     @State private var text = ""
+    /// The `refill` this field already took: one the owner cleared since does not come back while the field stays.
+    @State private var tookRefill: String?
     @FocusState private var hasFocus: Bool
 
     var body: some View {
@@ -394,8 +399,18 @@ struct AnswerFieldView: View {
         .onDisappear { if !text.isEmpty { reportDraft?(false) } }
         .onAppear {
             restoreDraft()
+            takeRefill()
             if focused { hasFocus = true }
         }
+        .onChange(of: refill) { _, _ in takeRefill() }
+    }
+
+    /// The text that came back, ahead of what the field holds now.
+    private func takeRefill() {
+        guard let refill, !refill.isEmpty, refill != tookRefill else { return }
+        tookRefill = refill
+        if text == refill || text.hasPrefix(refill + " ") { return }
+        text = text.isEmpty ? refill : refill + " " + text
     }
 
     /// What the owner typed here before the card last went (P273).

@@ -77,13 +77,13 @@ struct WidgetFullColourTests {
 
     // MARK: The look
 
-    /// Over the apps, Widget's Frost is as it was (its floor at 0); on the desktop, dimmed, from a tenth; in full colour
+    /// Over the apps, Widget's Frost is as it was (its floor at 0); on the desktop, full colour and dimmed alike (P1227),
     /// nothing at 0; each up to the dark ground's 0.6 at 1, never the light one. Light and dark's is untouched by any.
     @Test func fullColourLaysNoGroundUnlessFrostAsks() {
         for frost in stride(from: 0.0, through: 1.0, by: 0.1) {
             let stored = GlassFrost.stored(frost)
             #expect(abs(GlassFrost.widgetOpacity(frost, state: .fullColour) - stored * GlassFrost.widgetMaximum) < 1e-9)
-            #expect(abs(GlassFrost.widgetOpacity(frost, state: .dimmed) - (0.1 + stored * 0.5)) < 1e-9)
+            #expect(GlassFrost.widgetOpacity(frost, state: .dimmed) == GlassFrost.widgetOpacity(frost, state: .fullColour))
             #expect(GlassFrost.widgetOpacity(frost, state: .overApps) == GlassFrost.widgetOpacity(frost))
             #expect(abs(GlassFrost.widgetOpacity(frost) - (0.5 + stored * 0.1)) < 1e-9)
             for scheme in [ColorScheme.light, .dark] {
@@ -94,14 +94,16 @@ struct WidgetFullColourTests {
                 #expect(before == either)
             }
         }
-        #expect(GlassFrost.widgetOpacity(0, state: .fullColour) == 0 && GlassFrost.widgetDimmedFloor == 0.1)
+        #expect(GlassFrost.widgetOpacity(0, state: .fullColour) == 0 && GlassFrost.widgetDimmedFloor == 0)
     }
 
     /// The panel's ground while the widgets are dimmed (P1214), against the only measured dimmed widget (lavender
     /// #8A8CC8 under it came out #6F6FC4, P872) through the dark face (`GlassFaceModel.dark`): no ground of ours 15.7, a
     /// tenth 17.1, a fifth 19.2 (no public glass deepens and saturates at once), the old half 32.2; over the dimmed
     /// widgets' model's colours (`WidgetGlassRenders.widgetModel`: the lavender, its pink, a night sky, white, a mid
-    /// grey) a tenth is the closest of the four, mean ΔE 9.4 against 10.1 with none.
+    /// grey) a tenth is the closest of the four, mean ΔE 9.4 against 10.1 with none. The measurement stands; the panel no
+    /// longer lays the tenth: the owner's screenshot of 2026-10-05 shows the dimmed widgets the same light glass as in
+    /// full colour, so the panel's dimmed glass is its full-colour one (P1227).
     @Test func theDimmedGroundIsATenth() {
         func through(_ hex: UInt32, ground: Double, face: GlassFaceModel = .dark) -> UInt32 {
             let c = Self.rgb(hex), f = face.apply(c.r, c.g, c.b), g = Self.rgb(0x242427)
@@ -217,14 +219,15 @@ struct WidgetFullColourTests {
         center.post(name: NSWorkspace.didActivateApplicationNotification, object: nil)
         #expect(watch.state == .fullColour)
         let full = try bitmap(AnyView(DesktopPanelRootView(actions: actions, hover: { _ in }, widgets: watch)))
-        // The band under the panel's top padding: far lighter dimmed than the old ground, lighter still in full colour.
+        // The band under the panel's top padding: far lighter dimmed than the old ground, and the same glass in full colour
+        // (P1227).
         func luma(_ data: [UInt8], _ x: Int, _ y: Int) -> Double {
             let i = (y * 820 + x) * 4
             return 0.2126 * Double(data[i]) + 0.7152 * Double(data[i + 1]) + 0.0722 * Double(data[i + 2])
         }
         let at = (2 * 200, 2 * 32)
         #expect(luma(dimmed, at.0, at.1) > luma(old, at.0, at.1) + 20, "\(luma(dimmed, at.0, at.1)) \(luma(old, at.0, at.1))")
-        #expect(luma(full, at.0, at.1) > luma(dimmed, at.0, at.1) + 4, "\(luma(full, at.0, at.1)) \(luma(dimmed, at.0, at.1))")
+        #expect(abs(luma(full, at.0, at.1) - luma(dimmed, at.0, at.1)) < 2, "\(luma(full, at.0, at.1)) \(luma(dimmed, at.0, at.1))")
     }
 
     // MARK: Helpers

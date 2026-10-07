@@ -129,9 +129,8 @@ extension SessionEngine {
         closeRequests(in: sessionID, cause: .islandAnswer, fromBridge: true) { $0.isRoot }
         guard attention.head(of: sessionID) == nil, state.session(id: sessionID) != nil else { return }
         signals.dropHeld(sessionID)
-        state.apply(.sessionCompleted(SessionCompleted(sessionID: sessionID, summary: "Interrupted.", timestamp: dependencies.now(),
-                                                       isInterrupt: true)))
-        interruptedSessionIDs.insert(sessionID)
+        // Applied here, not ingested: a folded session's own turn ends with it too (P1437).
+        applyOwnInterrupt(sessionID, summary: "Interrupted.", at: dependencies.now())
     }
 
     /// The bridge's own echo of an island answer to a request it held: its "denied" completion (which reads as a Done

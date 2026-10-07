@@ -299,6 +299,19 @@ enum Looks {
         }
         return true
     }
+
+    /// As `until(_:_:)`, a look every `every` seconds (a look that lays a rig out costs more than one that reads a
+    /// flag): `limit` seconds' worth of looks at that pace, however late each comes (P1253).
+    static func until(_ limit: TimeInterval, every: TimeInterval, isolation: isolated (any Actor)? = #isolation,
+                      _ condition: () -> Bool) async -> Bool {
+        var looks = max(1, Int((limit / every).rounded(.up)))
+        while !condition() {
+            guard looks > 0, !Task.isCancelled else { return false }
+            looks -= 1
+            try? await Task.sleep(for: .seconds(every))
+        }
+        return true
+    }
 }
 
 /// The tests' `Box` (EngineFixtures lives in the other test target).

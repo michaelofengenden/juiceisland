@@ -15,6 +15,10 @@ public enum AccountState: Sendable, Equatable, Hashable {
     /// organization with none, an Anthropic Console login): No plan's dimmed battery, waits and rules, in its own words
     /// ("No limits"), since nothing ended.
     case noLimits
+    /// A Codex login whose reads keep failing while its login file has not changed in over 9 days (`Rules.loginLapsed`,
+    /// P1550): its ChatGPT login lapsed, since Juice never refreshes one and Codex does only when it is used. Its words say
+    /// "Open Codex once to refresh this login", never "rate limited", whatever the failure was.
+    case loginLapsed
 
     public var isAvailable: Bool {
         if case .available = self { return true }

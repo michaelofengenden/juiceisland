@@ -4,7 +4,7 @@ import Testing
 @testable import JuiceIslandUI
 
 /// P1050: the window tells the engine which requests' cards it shows the owner, so a Codex request held for its card
-/// (Answer Codex on the island) is answered from the window in Window mode. Fixture sessions, a fake workspace center
+/// (Answer Codex in Juice) is answered from the window in Window mode. Fixture sessions, a fake workspace center
 /// and fake process ids; no window is ordered in.
 @MainActor
 @Suite(.serialized)

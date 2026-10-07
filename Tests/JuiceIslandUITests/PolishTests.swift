@@ -195,18 +195,13 @@ struct ShowAllScrollTests {
         return (0..<count).flatMap { FramePerf.newSession("all-\($0)", title: "Task number \($0)", at: now - Double(60 * $0)) }
     }
 
-    /// Waits until `settled` for at most `limit` seconds, laying `rig`'s island out every 50 ms as a display would:
-    /// other suites share the main actor, so a set wait can end before the motion does, and the rig's window is never
-    /// on screen to be drawn.
+    /// Waits until `settled`, laying `rig`'s island out and committing it before each look as a display would
+    /// (`FramePerf.settle`): other suites share the main actor, so a set wait can end before the motion does, the rig's
+    /// window is never on screen to be drawn, and `limit` counts looks, not seconds, which a full run spent with a
+    /// handful of looks taken (P1258).
     @discardableResult
     static func until(_ rig: Rig, limit: TimeInterval = 30, _ settled: () -> Bool) async -> Bool {
-        let end = Date().addingTimeInterval(limit)
-        while !settled() {
-            if Date() > end { return false }
-            rig.host.layoutSubtreeIfNeeded()
-            await FramePerf.wait(0.05)
-        }
-        return true
+        await FramePerf.settle(rig, limit: limit, settled)
     }
 
     /// The island open and at rest: the surface drawn at the height the model has.
@@ -249,8 +244,7 @@ struct ShowAllScrollTests {
             #expect(rig.director.model.islandHeight <= Rig.maxHeight + 0.5 && abs(rig.director.model.islandHeight - model.islandHeight) < 0.5)
             // Folded back: the list leaves the scroll view, and every row it shows is measured and in focus again.
             rig.director.send(.close(.fold))
-            await Self.until(rig) { rig.director.model.surface == .closed && !rig.ui.showAll }
-            await FramePerf.wait(0.3)
+            await Self.until(rig) { rig.director.model.surface == .closed && !rig.ui.showAll && !rig.director.model.inMotion }
             rig.open()
             let shown = IslandListLayout.make(rows: rig.env.sessions.rows, style: style, showAll: false, now: rig.env.sessions.now).shown
             func inFocus() -> Bool {

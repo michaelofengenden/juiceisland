@@ -4,7 +4,7 @@ import OpenIslandCore
 import Testing
 @testable import IslandEngine
 
-/// Answer Codex on the island (P470) through the engine, with the broker stood in: what the broker holds from the request
+/// Answer Codex in Juice (P470) through the engine, with the broker stood in: what the broker holds from the request
 /// alone, what the engine hands back before any card (the owner looking at Codex, a reviewer that is not the owner, one
 /// that cannot be read, a helper that ended, an entry past its grace), and what an island answer sends. Inputs in
 /// codex-rs's shapes (`hooks/src/schema.rs`, `protocol.rs` `TurnContextItem`); fictional values.
@@ -15,7 +15,7 @@ struct CodexHoldTests {
     typealias R = RolloutFixtures
     typealias T = CodexAttentionTableTests
 
-    /// A Codex session whose rollout the tracker has read (its reviewer), with Answer Codex on the island on.
+    /// A Codex session whose rollout the tracker has read (its reviewer), with Answer Codex in Juice on.
     private func scene(reviewer: String? = "user", frontmost: Bool = false, app: Bool = false, on: Bool = true) -> S {
         let s = S(frontmost: frontmost)
         s.engine.answersCodex = on

@@ -112,3 +112,43 @@ struct CrossIcon: View {
         .frame(width: 10, height: 10)
     }
 }
+
+/// Send to island (12, 12 viewBox): a pill at the top and an arrow rising into it (P1300).
+struct FoldIcon: View {
+    var colour: Color = IslandTheme.ink
+    var side: CGFloat = 12
+
+    var body: some View {
+        Canvas { context, size in
+            let rect = CGRect(origin: .zero, size: size), box = CGSize(width: 12, height: 12)
+            let scale = min(size.width / box.width, size.height / box.height)
+            let pill = Path(roundedRect: CGRect(x: 2.5, y: 1, width: 7, height: 3), cornerRadius: 1.5)
+            var arrow = Path()
+            arrow.move(to: CGPoint(x: 6, y: 11)); arrow.addLine(to: CGPoint(x: 6, y: 6.2))
+            arrow.move(to: CGPoint(x: 3.8, y: 8.4)); arrow.addLine(to: CGPoint(x: 6, y: 6.2)); arrow.addLine(to: CGPoint(x: 8.2, y: 8.4))
+            context.fill(scaled(pill, viewBox: box, in: rect), with: .color(colour))
+            context.stroke(scaled(arrow, viewBox: box, in: rect), with: .color(colour),
+                           style: StrokeStyle(lineWidth: 1.4 * scale, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: side, height: side)
+    }
+}
+
+/// Open in terminal (12, 12 viewBox): an arrow out of the island, up and to the right, as the rows' jump says "↗".
+struct OpenOutIcon: View {
+    var colour: Color = IslandTheme.ink
+    var side: CGFloat = 10
+
+    var body: some View {
+        Canvas { context, size in
+            let rect = CGRect(origin: .zero, size: size), box = CGSize(width: 12, height: 12)
+            let scale = min(size.width / box.width, size.height / box.height)
+            var arrow = Path()
+            arrow.move(to: CGPoint(x: 2.5, y: 9.5)); arrow.addLine(to: CGPoint(x: 9.5, y: 2.5))
+            arrow.move(to: CGPoint(x: 4.5, y: 2.5)); arrow.addLine(to: CGPoint(x: 9.5, y: 2.5)); arrow.addLine(to: CGPoint(x: 9.5, y: 7.5))
+            context.stroke(scaled(arrow, viewBox: box, in: rect), with: .color(colour),
+                           style: StrokeStyle(lineWidth: 1.4 * scale, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: side, height: side)
+    }
+}

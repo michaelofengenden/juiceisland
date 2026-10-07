@@ -68,6 +68,9 @@ struct UsageBatteryView: View {
                 }
         case .signInNeeded:
             dashed { BatteryKeyGlyph(colour: palette.tone(Theme.attention)).frame(width: 13, height: 8) }
+        case .loginLapsed:
+            // Sign-in needed's outline, with a turning arrow: open Codex once and the login refreshes (P1550).
+            dashed { BatteryRefreshGlyph(colour: palette.tone(Theme.attention)).frame(width: 10, height: 10) }
         case .signingIn:
             dashed {
                 HStack(spacing: 2.5) {
@@ -233,6 +236,39 @@ private struct HaloDigit<Cut: BatteryCutting>: View {
             Text(verbatim: digit).foregroundStyle(colour).modifier(digitCut)
         }
         .frame(width: width)
+    }
+}
+
+/// A lapsed Codex login's mark (P1550), in the key's red: a ring turning clockwise, open at its top right, its arrowhead
+/// at the top pointing on. Drawn in a 10 × 10 box, scaled to fit.
+struct BatteryRefreshGlyph: View {
+    var colour: Color = Theme.attention
+
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / 10
+            let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+            let radius = 3.3 * scale
+            // Angles on screen (y down, so a larger angle turns clockwise): from 25° on the right round to 285° at the top.
+            func point(_ degrees: Double, _ r: CGFloat = radius) -> CGPoint {
+                let a = degrees * .pi / 180
+                return CGPoint(x: centre.x + r * CGFloat(cos(a)), y: centre.y + r * CGFloat(sin(a)))
+            }
+            var ring = Path()
+            ring.addLines(stride(from: 25.0, through: 285.0, by: 5).map { point($0) })
+            context.stroke(ring, with: .color(colour), style: StrokeStyle(lineWidth: 1.5 * scale, lineCap: .round))
+            // The arrowhead, on the ring's tangent at its end.
+            let end = 285.0 * .pi / 180
+            let tangent = CGVector(dx: -sin(end), dy: cos(end)), outward = CGVector(dx: cos(end), dy: sin(end))
+            let tip = point(285), head = 2.1 * scale
+            var arrow = Path()
+            arrow.move(to: CGPoint(x: tip.x + tangent.dx * head * 1.1, y: tip.y + tangent.dy * head * 1.1))
+            arrow.addLine(to: CGPoint(x: tip.x + outward.dx * head - tangent.dx * head * 0.3, y: tip.y + outward.dy * head - tangent.dy * head * 0.3))
+            arrow.addLine(to: CGPoint(x: tip.x - outward.dx * head - tangent.dx * head * 0.3, y: tip.y - outward.dy * head - tangent.dy * head * 0.3))
+            arrow.closeSubpath()
+            context.fill(arrow, with: .color(colour))
+        }
+        .accessibilityHidden(true)
     }
 }
 

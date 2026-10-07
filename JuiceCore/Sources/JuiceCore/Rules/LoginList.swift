@@ -68,8 +68,9 @@ public struct ProviderLogins: Sendable, Equatable, Identifiable {
 
 /// Builds the per-login lists and the batteries the panel draws for them. Pure, like `PanelModelBuilder`.
 public enum LoginList {
+    /// `loginFiles`: when each Codex login's file last changed, by login id (`PanelModelBuilder.build`, P1550, P1553).
     public static func build(accounts: [Account], logins: [String: Login], folders: [String: FolderState], signingIn: Set<String>,
-                             now: Date, home: String = NSHomeDirectory()) -> [ProviderLogins] {
+                             now: Date, home: String = NSHomeDirectory(), loginFiles: [String: Date] = [:]) -> [ProviderLogins] {
         let enabled = accounts.filter(\.monitored)
         return Provider.allCases.compactMap { provider in
             let mine = enabled.filter { $0.provider == provider }
@@ -103,15 +104,19 @@ public enum LoginList {
             var states: [String: AccountState] = [:]
             let records = Dictionary(shown.compactMap { login in login.record.map { (login.id, $0) } }, uniquingKeysWith: { a, _ in a })
             for login in shown {
-                states[login.id] = PanelModelBuilder.state(of: login.id, records: records, signingIn: signingIn, provider: provider, now: now)
+                states[login.id] = PanelModelBuilder.state(of: login.id, records: records, signingIn: signingIn, provider: provider, now: now,
+                                                           loginFiles: loginFiles)
             }
             let next = shown.first { $0.monitored && (states[$0.id] ?? .unknown).isAvailable }?.id
             let rows = shown.map { login in
                 let name = names[login.id] ?? login.email
                 let state = states[login.id] ?? .unknown
+                let aging = Rules.loginAging(provider: provider, record: login.record, loginFileChanged: loginFiles[login.id], now: now)
                 return LoginRow(id: login.id, provider: provider, email: login.email, org: login.orgName, plan: login.record?.planWord,
                                 battery: BatteryModel(id: login.id, alias: name, state: state, isNext: login.id == next,
-                                                      hoverLabel: PanelModelBuilder.batteryLabel(alias: name, state: state, record: login.record, now: now)),
+                                                      hoverLabel: PanelModelBuilder.batteryLabel(alias: name, state: state, record: login.record,
+                                                                                                 now: now, loginAging: aging),
+                                                      loginAging: aging),
                                 monitored: login.monitored, folders: held[login.id] ?? [])
             }
             return ProviderLogins(provider: provider, logins: rows, folders: loose)

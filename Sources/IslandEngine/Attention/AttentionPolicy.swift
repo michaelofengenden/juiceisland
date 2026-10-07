@@ -19,8 +19,11 @@ enum AttentionPolicy {
     }
 
     /// The surface a Claude request comes from: its entrypoint, "cli" when none is given but the agent has a
-    /// terminal, "missing" otherwise (Diagnostics names it so).
-    static func claudeSurface(entrypoint: String?, hasTerminal: Bool) -> String {
+    /// terminal, "missing" otherwise (Diagnostics names it so). `islandRun`: the island's own resume of the session is
+    /// under way (`claude -p`, whose entrypoint is `sdk-cli`), on the owner's Return in its folded card (P1328): its card
+    /// is the only place anyone can answer, so it counts as the terminal's surface, held and shown.
+    static func claudeSurface(entrypoint: String?, hasTerminal: Bool, islandRun: Bool = false) -> String {
+        if islandRun, entrypoint == "sdk-cli" { return "cli" }
         if let entrypoint, !entrypoint.isEmpty { return entrypoint }
         return hasTerminal ? "cli" : "missing"
     }
@@ -33,8 +36,9 @@ enum AttentionPolicy {
     /// shows: `brokerHold`, P350),
     /// `local-agent` and any unknown or missing-without-a-terminal entrypoint; released and not shown at all for a
     /// headless run or `dontAsk` (the call is the SDK host's, or denied).
-    static func claude(entrypoint: String?, hasTerminal: Bool, agentID: String?, permissionMode: String?) -> ClaudeDecision {
-        let surface = claudeSurface(entrypoint: entrypoint, hasTerminal: hasTerminal)
+    static func claude(entrypoint: String?, hasTerminal: Bool, agentID: String?, permissionMode: String?,
+                       islandRun: Bool = false) -> ClaudeDecision {
+        let surface = claudeSurface(entrypoint: entrypoint, hasTerminal: hasTerminal, islandRun: islandRun)
         let place = claudePlace(surface)
         if permissionMode == "dontAsk" || headlessEntrypoints.contains(surface) {
             return ClaudeDecision(hold: false, show: false, place: place)
@@ -71,11 +75,13 @@ enum AttentionPolicy {
     /// The broker's reply, from the request alone, before any rollout or state is read: a Claude main-thread request
     /// on a holdable surface is held until the engine ends it; with Answer subagents on the island on, a subagent's tool
     /// approval from the same surfaces is held too, and the broker ends that hold by itself after `backstop` whatever the
-    /// main thread does (P350); with Answer Codex on the island on, a Codex main-thread shell command or patch in
+    /// main thread does (P350); with Answer Codex in Juice on, a Codex main-thread shell command or patch in
     /// Codex's `default` mode is held the same way, bounded, until the engine has read its thread's reviewer and where the
-    /// owner looks (P470); everything else is released at once.
+    /// owner looks (P470); a Claude request of a session whose island resume is under way (`islandRun`, P1328) as a
+    /// terminal's; everything else is released at once.
     static func brokerHold(_ line: HookRequestLine, _ object: [String: Any], answersSubagents: Bool, answersCodex: Bool = false,
-                           backstop: TimeInterval = SubagentHold.limit + SubagentHold.backstopMargin) -> BrokerHold {
+                           backstop: TimeInterval = SubagentHold.limit + SubagentHold.backstopMargin,
+                           islandRun: (String) -> Bool = { _ in false }) -> BrokerHold {
         if line.source == "codex" {
             let input = object["tool_input"] as? [String: Any]
             guard answersCodex,
@@ -88,12 +94,13 @@ enum AttentionPolicy {
         guard line.source == "claude" else { return .released }
         let agentID = object["agent_id"] as? String
         let mode = object["permission_mode"] as? String
-        if claude(entrypoint: line.entrypoint, hasTerminal: line.hasTerminal, agentID: agentID, permissionMode: mode).hold {
+        let run = (object["session_id"] as? String).map(islandRun) ?? false
+        if claude(entrypoint: line.entrypoint, hasTerminal: line.hasTerminal, agentID: agentID, permissionMode: mode, islandRun: run).hold {
             return BrokerHold(held: true)
         }
         guard answersSubagents,
               subagentHoldable(entrypoint: line.entrypoint, hasTerminal: line.hasTerminal, agentID: agentID, permissionMode: mode,
-                               toolName: object["tool_name"] as? String) else { return .released }
+                               toolName: object["tool_name"] as? String, islandRun: run) else { return .released }
         return BrokerHold(held: true, bound: backstop)
     }
 
@@ -101,9 +108,11 @@ enum AttentionPolicy {
     /// longer to answer than the hold lasts) from one of the four surfaces a main-thread request is held for, never in
     /// `dontAsk`, a headless run, `local-agent` or an unknown surface, whose ordering nobody measured.
     static func subagentHoldable(entrypoint: String?, hasTerminal: Bool, agentID: String?, permissionMode: String?,
-                                 toolName: String?) -> Bool {
+                                 toolName: String?, islandRun: Bool = false) -> Bool {
         guard let agentID, !agentID.isEmpty, permissionMode != "dontAsk" else { return false }
-        guard holdableEntrypoints.contains(claudeSurface(entrypoint: entrypoint, hasTerminal: hasTerminal)) else { return false }
+        guard holdableEntrypoints.contains(claudeSurface(entrypoint: entrypoint, hasTerminal: hasTerminal, islandRun: islandRun)) else {
+            return false
+        }
         return toolName != "AskUserQuestion" && toolName != "ExitPlanMode"
     }
 

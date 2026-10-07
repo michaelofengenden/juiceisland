@@ -157,23 +157,13 @@ struct ReadmeShotRenders {
                                  size: PanelGeometry.windowSize(for: size), env: env, background: PRenders.wallpaper)
     }
 
-    /// The desktop widget, medium, on the panel's wallpaper, drawn as WidgetKit frames it (`WidgetRenders`).
+    /// The Usage widget, medium, as the desktop shows it in full colour over a lavender sunset: Glass, nothing of ours on
+    /// the system's glass (`UsageWidgetRenders`, P1224, P1401).
     @Test func widget() throws {
         let env = try Self.environment()
         let snapshot = WidgetSnapshot.make(env, at: DemoClock.now)
-        let size = WidgetRenders.Size.medium, margin = WidgetRenders.margin
-        let view = IslandWidgetView(snapshot: snapshot, face: .medium,
-                                    size: CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin),
-                                    date: DemoClock.now, tinted: false)
-            .padding(margin)
-            .frame(width: size.width, height: size.height)
-            .background {
-                RoundedRectangle(cornerRadius: WidgetRenders.radius, style: .continuous).fill(IslandTheme.bg)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: WidgetRenders.radius, style: .continuous))
-            .padding(24)
-            .background(PRenders.wallpaper)
-        try RenderHarness.render(view, "readme-widget", env: env)
+        try RenderHarness.render(UsageWidgetRenders.scene(snapshot, .medium, wallpaper: .sunset, mode: .glass), "readme-widget",
+                                 size: UsageWidgetRenders.sceneSize(.medium), env: env)
     }
 
     // MARK: The Agents shot

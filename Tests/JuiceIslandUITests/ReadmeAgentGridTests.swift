@@ -29,7 +29,7 @@ struct ReadmeAgentGridTests {
         var lines = [
             Line(name: AgentRowText.name(.claude), reach: AgentReach.approve.title, usage: battery,
                  place: "`settings.json` in `~/.claude` and each `~/.claude-*` profile"),
-            // Approve only while Answer Codex on the island holds (P947).
+            // Approve only while Answer Codex in Juice holds (P947).
             Line(name: AgentRowText.name(.codex), reach: AgentReach.approve.title + "¹", usage: battery,
                  place: "`hooks.json` and `config.toml` in `~/.codex` and each `~/.codex-*` profile"),
             // OpenCode's plugin is the flavor's own file too (`OpenCodePlugin.fileName`, P934).
@@ -65,7 +65,7 @@ struct ReadmeAgentGridTests {
             "**\(AgentReach.approve.title)**: answer its prompts from the island. "
                 + "**\(AgentReach.watch.title)**: see its sessions and jump to them, and answer its prompts there.",
             "",
-            "¹ With Settings › Island › Answer Codex on the island; \(AgentReach.watch.title) otherwise.",
+            "¹ With Settings › Island › Answer Codex in Juice; \(AgentReach.watch.title) otherwise.",
         ]
         for note in notes() { text += ["", "\(note.mark) \(note.text)."] }
         text += ["", end]

@@ -432,26 +432,20 @@ struct GlassThemeTests {
         }
     }
 
-    // MARK: The widget (P566)
+    // MARK: The widget (P566, superseded by P1224)
 
-    /// The widget in Glass: a white veil at the light look's bound (a black wallpaper shows as that grey, never darker),
-    /// the rim in its shape, its content in the light scheme; Reduce Transparency the opaque light ground, Increase
-    /// Contrast the stronger bound. Never black.
-    @Test func theWidgetIsTheLightGlassNeverABlackPlate() throws {
+    /// The widget takes no theme: whatever the island's theme, its container background is the owner's Widget background
+    /// (`WidgetBackdrop`, P1401), Glass's material or Black's black, never a theme's plate.
+    @Test func theWidgetTakesNoThemeOfItsOwn() throws {
         let size = CGSize(width: 160, height: 160), shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        func centre(_ reduce: Bool = false, _ contrast: ColorSchemeContrast = .standard) throws -> (r: Double, g: Double, b: Double, a: Double) {
-            try ThemeTests.pixels(WidgetGlassBody(rendering: .live, reduceTransparency: reduce, contrast: contrast)
-                .frame(width: size.width, height: size.height).containerShape(shape).background(Color.black), size: size).rgba(160, 160)
+        for choice in WidgetBackgroundChoice.allCases {
+            func drawn(_ theme: JuiceTheme) throws -> [UInt8] {
+                // Over a red ground: an empty render's bytes are not read.
+                try ThemeTests.pixels(ZStack { Color(red: 1, green: 0, blue: 0); WidgetBackdrop(choice: choice) }.environment(\.glassRendering, .live)
+                    .frame(width: size.width, height: size.height).containerShape(shape).environment(\.juiceTheme, theme), size: size).data
+            }
+            let black = try drawn(.black)
+            for theme in JuiceTheme.allCases { #expect(WidgetGlassRenders.alike(try drawn(theme), black), "\(choice) \(theme)") }
         }
-        let live = try centre()
-        #expect(abs(live.r - GlassContrast.lightFloor) < 0.01 && live.r == live.g && live.g == live.b, "\(live)")
-        #expect(abs(try centre(false, .increased).r - GlassContrast.lightFloorIncreased) < 0.01)
-        let solid = try centre(true), light = C.components(GlassAdapted.solidLight)
-        #expect(abs(solid.r - light.r) < 0.01)
-        #expect(IslandWidgetEntryView.lightInk(.glass, .fullColor) && !IslandWidgetEntryView.lightInk(.glass, .accented)
-            && !IslandWidgetEntryView.lightInk(.smoke, .fullColor) && !IslandWidgetEntryView.lightInk(.black, .fullColor))
-        // Its worst surface is the island's light look's, so every ink that holds there holds on the widget.
-        #expect(abs(C.luminance(r: WidgetGlassBody.veil(.standard), g: WidgetGlassBody.veil(.standard), b: WidgetGlassBody.veil(.standard))
-            - C.worstAdapted(.light)) < 0.001)
     }
 }

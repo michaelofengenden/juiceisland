@@ -41,11 +41,14 @@ extension EnvironmentValues {
 /// and dark nothing (the Appearance's, as before).
 struct GlassLookFace: ViewModifier {
     @Environment(\.glassLook) private var glassLook
+    @Environment(\.widgetGlassState) private var widgetState
 
     func body(content: Content) -> some View {
         content
             .transformEnvironment(\.colorScheme) { if glassLook == .widget { $0 = .dark } }
             .transformEnvironment(\.glassWidgetInk) { if glassLook == .widget { $0 = true } }
+            // The desktop's widgets dimmed: their content tinted white, so the panel's (P1227).
+            .transformEnvironment(\.glassWidgetMono) { if glassLook == .widget, widgetState == .dimmed { $0 = true } }
     }
 }
 

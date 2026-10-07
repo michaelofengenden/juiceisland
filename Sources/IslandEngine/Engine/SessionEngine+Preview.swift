@@ -36,9 +36,13 @@ extension SessionEngine {
         runner.frontmostBundleID = { nil }
         runner.appForPID = { _ in nil }
         dependencies.jumpRunner = runner
-        dependencies.ttyForPID = { _ in nil }
+        // A made-up tty per agent `loadPreviewAgents` named, so a demo Terminal turn has its tab (P1300); no process is
+        // looked at, and no route types anywhere but `replies`.
+        dependencies.ttyForPID = { pid in "/dev/ttys" + String(format: "%03d", Int(pid) % 1000) }
         dependencies.appForPID = { _ in nil }
         dependencies.agentAtPrompt = { _ in true }
+        // The demo's Codex background service, by its made-up pid; no real process is asked (P1485).
+        dependencies.isCodexServer = { $0 == SessionEngine.previewCodexServicePID }
         dependencies.isSessionFrontmost = { _ in false }
         dependencies.frontmostBundleID = { nil }
         dependencies.updateProcessRoots = { _ in }
@@ -58,6 +62,9 @@ extension SessionEngine {
         dependencies.notificationArming = { _ in false }
         dependencies.watchTranscript = { _, _, _ in nil }
         dependencies.processExists = { _ in true }
+        // No process is looked at for a fold's agent either (P1415).
+        dependencies.parentPID = { _ in nil }
+        dependencies.processName = { _ in nil }
         // A demo rollout is fictional and never read: a request's reviewer is the one `loadPreviewRollout` folded.
         dependencies.readCodexSettings = { _ in nil }
         dependencies.watchesSubagentRollouts = false
@@ -143,6 +150,25 @@ extension SessionEngine {
         guard bridgeServer == nil else { return false }
         ingest(note: HookContextNote(event: event, sessionID: sessionID, toolUseID: toolUseID, notificationType: notificationType,
                                      permissionMode: permissionMode, source: source, effort: effort))
+        return true
+    }
+
+    /// The made-up pid of the demo's Codex background service: a session whose notes name it runs there (P1486).
+    public nonisolated static let previewCodexServicePID: Int32 = 4399
+
+    /// Sends sessions to the island as Send to island does, newest last in `ids`, with no window tucked (P1300): for the
+    /// demo and renders. Only while the bridge is not running, like `loadPreviewEvents`; a session that cannot fold is
+    /// left out.
+    @discardableResult
+    public func loadPreviewFolds(_ ids: [String]) -> Bool {
+        guard bridgeServer == nil else { return false }
+        for (index, id) in ids.enumerated() where canFold(sessionID: id) {
+            var fold = FoldedSession(sessionID: id, since: dependencies.now().addingTimeInterval(Double(index - ids.count)),
+                                     session: state.session(id: id))
+            fold.turnOpen = state.session(id: id).map { $0.phase != .completed } ?? false
+            fold.host = state.session(id: id).flatMap { replyRoute(for: $0) }.flatMap(FoldedSession.hostWord)
+            folds[id] = fold
+        }
         return true
     }
 

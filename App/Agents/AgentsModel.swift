@@ -36,7 +36,7 @@ protocol AgentsModel: AnyObject {
 final class AgentsPaneModel: AgentsModel {
     /// The agents table's rows, set by the app; empty in renders.
     @ObservationIgnored var sources: [any AgentRowSource] = []
-    /// Whether the app answers Codex now (Answer Codex on the island, in either mode since P1050): Approve, else Watch (P947).
+    /// Whether the app answers Codex now (Answer Codex in Juice, in either mode since P1050): Approve, else Watch (P947).
     @ObservationIgnored var answersCodex: @MainActor () -> Bool = { true }
     /// The managed helper's path, for Add by hand's lines: the app's own (`HookHome`, P900).
     @ObservationIgnored var helperPath: @MainActor () -> String = { HookHome.current.helperURL.path }

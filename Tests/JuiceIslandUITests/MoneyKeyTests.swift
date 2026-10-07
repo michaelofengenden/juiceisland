@@ -72,16 +72,14 @@ import Testing
             try await wait(sourceLocation: sourceLocation) { money.records[account]?.lastGood != nil }
         }
 
-        /// Waits up to 300 s for `done` and records an issue if it never holds. Alone it takes milliseconds; in a whole
-        /// parallel run on a loaded Mac a test that waits for the launch read and one reading has taken a minute.
+        /// Waits for `done`, for 300 s worth of looks at most (`Looks`), and records an issue if it never holds. Alone
+        /// it takes milliseconds. The looks are counted, not the clock: the suite's first test starts with the whole
+        /// parallel run, whose main actor (the launch read's every hop, and each look) was held so long that 300 s of
+        /// wall clock passed before the read's three hops had their turns (P1253).
         func wait(sourceLocation: SourceLocation, _ done: () -> Bool) async throws {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(300))
-            while !done() {
-                guard ContinuousClock.now < deadline else {
-                    Issue.record("Timed out", sourceLocation: sourceLocation)
-                    return
-                }
-                try await Task.sleep(for: .milliseconds(10))
+            guard await Looks.until(300, done) else {
+                Issue.record("looked \(Looks.count(300)) times in vain", sourceLocation: sourceLocation)
+                return
             }
         }
     }

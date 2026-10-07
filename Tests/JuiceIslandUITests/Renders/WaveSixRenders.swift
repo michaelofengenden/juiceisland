@@ -4,7 +4,7 @@ import Testing
 @testable import JuiceIslandUI
 
 /// Wave 6's lanes together, as merged. `W6-settings-island`: Settings › Island with every row the wave added showing
-/// (Width, Text size, Questions open the island off with its line, Update dot on the pill, Answer Codex on the island,
+/// (Width, Text size, Questions open the island off with its line, Update dot on the pill, Answer Codex in Juice,
 /// Quiet while locked, two mute rules), and the rows that show only under another (Liquid's Pill edge line and Running,
 /// Show needs you, Quiet hours' span); `W6-settings-sound`: Volume and a Question sound of its own;
 /// `W6-settings-general`: Behavior with Permission modes on cards, Remind again and Notification banners;

@@ -3,15 +3,18 @@
 /// keys without making the app active (↑ ↓, Return, the card keys, Esc; the key again closes it); in Window mode the
 /// window comes forward. Or switch sessions (P462): the same, but the key again moves the ring to the next row (after
 /// the last, the first again) and Return jumps to the ring's session, a waiting one too; with ⇧ it goes back a row
-/// (P1033). Still the one hot key `GlobalJumpHotKey` registers: no second key and no monitor.
+/// (P1033). Or send the tab in front to the island (P1300): the session whose tab is in front folds into the island, as
+/// its row's Send to island does (Island mode only). Still the one hot key `GlobalJumpHotKey` registers: no second key
+/// and no monitor.
 enum GlobalKeyAction: String, CaseIterable, Sendable {
-    case jump, open, switcher
+    case jump, open, switcher, send
 
     var title: String {
         switch self {
         case .jump: "Jump to what needs you"
         case .open: "Open \(Product.name)"
         case .switcher: "Switch sessions"
+        case .send: "Send to island"
         }
     }
 
@@ -20,6 +23,7 @@ enum GlobalKeyAction: String, CaseIterable, Sendable {
         switch self {
         case .jump, .open: nil
         case .switcher: "Again for the next, ⇧ goes back; Return jumps."
+        case .send: "The agent's tab in front folds into the island."
         }
     }
 

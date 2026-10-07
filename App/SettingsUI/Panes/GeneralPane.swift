@@ -56,7 +56,7 @@ struct GeneralPane: View {
                     SettingsSwitch(isOn: $settings.modeChoicesOnCards, label: "Permission modes on cards")
                 }
                 // Only where the session's own tab is known exactly (P128).
-                FormRow("Reply from completion card", subtitle: "In tmux, iTerm and Ghostty") {
+                FormRow("Reply from completion card", subtitle: "In Terminal, iTerm, Ghostty and tmux") {
                     SettingsSwitch(isOn: $settings.replyFromCompletionCard, label: "Reply from completion card")
                 }
                 FormRow("No alerts for focused sessions") {

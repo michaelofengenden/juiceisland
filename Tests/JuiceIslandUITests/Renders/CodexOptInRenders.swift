@@ -5,7 +5,7 @@ import SwiftUI
 import Testing
 @testable import JuiceIslandUI
 
-/// Answer Codex on the island (P470), headless. `O-settings-island-codex`: Settings › Island with the switch on, under
+/// Answer Codex in Juice (P470), headless. `O-settings-island-codex`: Settings › Island with the switch on, under
 /// Answer subagents on the island. `O-card-codex-held-{island,detailed}`: Codex in a terminal asks to run a migration,
 /// held for the island, 7 s of its 12 left: No and Yes, the time left a thin line along Yes's foot, no Always allow and
 /// no No and stop (Codex's hook takes neither). `O-card-codex-released-island`: the same request once its hold ended,

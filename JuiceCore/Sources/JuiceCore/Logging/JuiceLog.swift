@@ -26,6 +26,9 @@ public enum JuiceLog {
     public static let signIn = Logger(subsystem: subsystem, category: "signin")
     /// The profile list: when it changed, by counts.
     public static let profiles = Logger(subsystem: subsystem, category: "profiles")
+    /// Sessions sent to the island: each decision of the fold and the resume, by session id and state, never a reply's
+    /// or an answer's text (`log show --predicate 'category == "fold"'`).
+    public static let fold = Logger(subsystem: subsystem, category: "fold")
 
     /// A profile folder as the log names it: its provider's word and 8 hex digits of the FNV-1a hash of the folder's
     /// name (`claude·3fa4c2d1`), the same on every run. Nothing of the path or of what is inside the folder.

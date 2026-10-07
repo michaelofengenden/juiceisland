@@ -13,7 +13,7 @@ import Testing
 ///   OpenAI row's rails). The island's look still, over the apps.
 /// - `after`: the panel now with the desktop in front: full colour, the dark face with nothing of ours in it, the white
 ///   ink's lift, the OpenAI row's word.
-/// - `dimmed`: the panel now with an app in front: the same glass a tenth deeper, the same lift (P1214).
+/// - `dimmed`: the panel now with an app in front: the full-colour glass, the same lift, its ink and marks white (P1227).
 /// - `reference`: the same content through a model of the widgets' full-colour glass fitted to the screenshot
 ///   (`WidgetGlassRenders.fullColourModel`), with Widget's white ink and nothing of ours: what the Batteries widget beside
 ///   the panel looked like. Fitted over the lavender only: over the pale and the night wallpapers it extrapolates the
@@ -136,15 +136,16 @@ struct WidgetFullColourRenders {
         #expect(near < 6 && far > 20, "after \(String(after, radix: 16)) reference \(String(reference, radix: 16)) before \(String(before, radix: 16)): \(near), \(far)")
     }
 
-    /// With an app in front, over the lavender where P872 measured the dimmed widgets (the gradient), the panel keeps the
-    /// wallpaper's colour, a step deeper than full colour: about as far from the dimmed widgets' model as the dark face
-    /// alone is, where Widget as it was sat twice as far, grey (P1214).
-    @Test func dimmedKeepsTheWallpapersColourAndDimsWithTheWidgets() throws {
-        let dimmed = try Self.glass(.dimmed, over: .gradient), reference = try Self.glass(.referenceDimmed, over: .gradient)
-        let before = try Self.glass(.before, over: .gradient), full = try Self.glass(.after, over: .gradient)
-        let near = WidgetFullColourTests.deltaE(dimmed, reference), far = WidgetFullColourTests.deltaE(before, reference)
+    /// With an app in front the panel keeps its full-colour glass, as the dimmed widgets keep theirs (P1227): over the
+    /// owner's sunset and the gradient the dimmed glass is the full-colour one, never darker or greyer, and far lighter
+    /// than Widget as it was (P1214's grey-mauve).
+    @Test func dimmedKeepsTheFullColourGlass() throws {
         let luma = { (c: UInt32) in 0.2126 * Double(c >> 16 & 0xFF) + 0.7152 * Double(c >> 8 & 0xFF) + 0.0722 * Double(c & 0xFF) }
-        #expect(near < 18 && far > 28, "dimmed \(String(dimmed, radix: 16)) reference \(String(reference, radix: 16)) before \(String(before, radix: 16)): \(near), \(far)")
-        #expect(luma(full) > luma(dimmed) + 4 && luma(dimmed) > luma(before) + 20, "\(luma(full)) \(luma(dimmed)) \(luma(before))")
+        for wallpaper in [GlassBackdrop.sunset, .gradient] {
+            let dimmed = try Self.glass(.dimmed, over: wallpaper), full = try Self.glass(.after, over: wallpaper)
+            let before = try Self.glass(.before, over: wallpaper)
+            #expect(WidgetFullColourTests.deltaE(dimmed, full) < 1.5, "\(wallpaper): dimmed \(String(dimmed, radix: 16)) full \(String(full, radix: 16))")
+            #expect(luma(dimmed) > luma(before) + 20, "\(wallpaper): \(luma(dimmed)) \(luma(before))")
+        }
     }
 }

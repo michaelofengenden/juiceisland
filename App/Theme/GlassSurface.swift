@@ -189,8 +189,8 @@ struct InGlass<S: Shape>: ViewModifier {
 /// in the look the glass hands its content. Under Light and dark it is the owner's choice, not an accessibility floor:
 /// at 0, nothing. Under Widget the dark ground is there from its state's floor (`GlassFrost.widgetOpacity`): over the
 /// apps at every Frost from `GlassFrost.widgetFloor` (P874); on the desktop, the widgets dimmed, from a tenth (P1214);
-/// in full colour only as far as Frost asks (P1205). A render's reference of the desktop widgets (`GlassStageInfo.bare`)
-/// has none.
+/// in full colour and dimmed only as far as Frost asks (P1205, P1227). A render's reference of the desktop widgets
+/// (`GlassStageInfo.bare`) has none.
 struct InFrost<S: Shape>: ViewModifier {
     var shape: S
     var style: GlassStyle
@@ -201,7 +201,7 @@ struct InFrost<S: Shape>: ViewModifier {
 
     func body(content: Content) -> some View {
         content.background {
-            if frost > 0 || (glassLook == .widget && widgetState != .fullColour), stage?.bare != true {
+            if frost > 0 || (glassLook == .widget && widgetState == .overApps), stage?.bare != true {
                 let colour = GlassFrost.colour(frost, look: glassLook, state: widgetState)
                 if style.glassFollowsShape {
                     shape.fill(colour)
@@ -469,6 +469,9 @@ enum GlassBackdrop: String, CaseIterable, Sendable {
     /// The owner's lavender-to-pink sunset of 2026-10-03 (P1205), drawn from their screenshot's samples: about #8E8AC6
     /// where the panel stood at the top left, #8E8CC9 above the Batteries widget and #AE97C6 below it, pinker lower down.
     case sunset
+    /// The owner's dark mountain wallpaper (P1402): a dusk sky over dark ridges, rock, and a pale river winding down, the
+    /// wallpaper the Batteries widget's glass showed "the rock and the river plainly through" on 2026-10-05.
+    case mountain
 
     /// Glass look's three, the owner's two first.
     static let wallpapers: [GlassBackdrop] = [.night, .gradient, .nearWhite]
@@ -501,6 +504,59 @@ enum GlassBackdrop: String, CaseIterable, Sendable {
                                    .init(color: Color(hex: 0xA392C7), location: 0.6), .init(color: Color(hex: 0xB89BC5), location: 0.82),
                                    .init(color: Color(hex: 0xD2A6C0), location: 1)],
                            startPoint: .top, endPoint: .bottom)
+        case .mountain: Canvas { context, size in Self.drawMountain(&context, size) }
+        }
+    }
+
+    /// A dark mountain photo's worth: a slate dusk sky lighter at the horizon, two ranges of dark ridges with a little
+    /// snow, a near slope of dark rock, and a pale river winding down through it with dark stones along it. Fixed points.
+    private static func drawMountain(_ context: inout GraphicsContext, _ size: CGSize) {
+        let w = size.width, h = size.height
+        func at(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * w, y: y * h) }
+        func ridge(_ points: [(CGFloat, CGFloat)], base: CGFloat) -> Path {
+            var path = Path()
+            path.move(to: at(0, base))
+            for point in points { path.addLine(to: at(point.0, point.1)) }
+            path.addLine(to: at(1, base))
+            path.addLine(to: at(1, 1))
+            path.addLine(to: at(0, 1))
+            path.closeSubpath()
+            return path
+        }
+        context.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .linearGradient(Gradient(colors: [Color(hex: 0x1C2533), Color(hex: 0x34445A), Color(hex: 0x58687C)]),
+                                           startPoint: .zero, endPoint: at(0, 0.5)))
+        let far = ridge([(0, 0.42), (0.12, 0.30), (0.22, 0.36), (0.34, 0.22), (0.46, 0.33), (0.58, 0.26), (0.7, 0.35), (0.84, 0.24),
+                         (1, 0.34)], base: 0.42)
+        context.fill(far, with: .color(Color(hex: 0x3A4659)))
+        for peak in [(0.34, 0.22), (0.58, 0.26), (0.84, 0.24)] {
+            var snow = Path()
+            snow.move(to: at(peak.0, peak.1))
+            snow.addLine(to: at(peak.0 + 0.035, peak.1 + 0.05))
+            snow.addLine(to: at(peak.0 - 0.03, peak.1 + 0.045))
+            snow.closeSubpath()
+            context.fill(snow, with: .color(Color(hex: 0xB9C4D0)))
+        }
+        let near = ridge([(0, 0.55), (0.1, 0.45), (0.25, 0.52), (0.38, 0.40), (0.52, 0.5), (0.66, 0.42), (0.8, 0.53), (0.92, 0.46),
+                          (1, 0.5)], base: 0.55)
+        context.fill(near, with: .linearGradient(Gradient(colors: [Color(hex: 0x262E38), Color(hex: 0x14181E)]),
+                                                 startPoint: at(0, 0.4), endPoint: at(0, 1)))
+        var river = Path()
+        river.move(to: at(0.47, 0.52))
+        river.addCurve(to: at(0.38, 0.75), control1: at(0.55, 0.6), control2: at(0.3, 0.66))
+        river.addCurve(to: at(0.55, 1), control1: at(0.45, 0.84), control2: at(0.62, 0.9))
+        river.addLine(to: at(0.78, 1))
+        river.addCurve(to: at(0.5, 0.74), control1: at(0.72, 0.88), control2: at(0.48, 0.84))
+        river.addCurve(to: at(0.49, 0.52), control1: at(0.52, 0.66), control2: at(0.6, 0.58))
+        river.closeSubpath()
+        context.fill(river, with: .linearGradient(Gradient(colors: [Color(hex: 0x7E93A6), Color(hex: 0xA9BBC9)]),
+                                                  startPoint: at(0, 0.52), endPoint: at(0, 1)))
+        let stones: [(x: CGFloat, y: CGFloat, r: CGFloat)] = [(0.33, 0.8, 0.03), (0.41, 0.92, 0.04), (0.6, 0.86, 0.035), (0.7, 0.96, 0.03),
+                                                              (0.84, 0.82, 0.05), (0.18, 0.9, 0.06), (0.52, 0.66, 0.02)]
+        for stone in stones {
+            let centre = at(stone.x, stone.y), radius = stone.r * min(w, h)
+            context.fill(Path(ellipseIn: CGRect(x: centre.x - radius, y: centre.y - radius * 0.6, width: 2 * radius, height: 1.2 * radius)),
+                         with: .color(Color(hex: 0x0E1114)))
         }
     }
 

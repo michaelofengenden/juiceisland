@@ -259,7 +259,7 @@ struct SessionActionsTests {
         // Set to open the island, the key jumps nowhere: no row shows its hint.
         settings.globalKeyAction = .open
         #expect(!SessionCardView.showsJumpHint(settings, problem: nil))
-        #expect(GlobalKeyAction.allCases.map(\.title) == ["Jump to what needs you", "Open Juice Island", "Switch sessions"])
+        #expect(GlobalKeyAction.allCases.map(\.title) == ["Jump to what needs you", "Open Juice Island", "Switch sessions", "Send to island"])
     }
 
     /// The Action row shows only while a key is recorded and on: otherwise it would change nothing (no dead controls).

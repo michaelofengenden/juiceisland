@@ -2,7 +2,7 @@ import AppKit
 import Observation
 
 /// Which requests' cards the window shows the owner now (P1050), for the engine (`SessionsModel.windowShows`): a Codex
-/// request held for its card (Answer Codex on the island) is held while the island or the window shows it, so Window mode
+/// request held for its card (Answer Codex in Juice) is held while the island or the window shows it, so Window mode
 /// answers Codex as Island mode does. Pure; `WindowAttentionWatch` fills it in from AppKit.
 ///
 /// The window shows a request's card when the window is on screen and someone can see it (`SurfaceVisibility.glyphsMove`:

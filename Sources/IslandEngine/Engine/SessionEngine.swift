@@ -122,6 +122,9 @@ public final class SessionEngine {
         /// Whether the agent at a pid is still at its terminal's controls: running, and its terminal's foreground job
         /// (P139). A reply is offered, and typed, only then.
         var agentAtPrompt: @Sendable (Int32) -> Bool = { ProcessTree.holdsItsTerminal(pid: $0, table: SystemProcessTable()) }
+        /// Whether a pid is a Codex app-server (its arguments: `codex … app-server`), the shared daemon among them: never a
+        /// tab's agent, whatever terminal its parent holds (P1485).
+        var isCodexServer: @Sendable (Int32) -> Bool = CodexServerProcess.live
         /// How a waiting approval's tool call is read: from its transcript, or the preview's fixtures.
         var toolCallReads = ToolCallReads.transcript
         /// Types a reply into a finished session's terminal (`reply`); nil: `ReplySender.live` in the app's own engine,
@@ -130,6 +133,17 @@ public final class SessionEngine {
         /// Opens a new terminal window for "Open in <account>" (`openFresh`, P703); nil: `FreshSessionLaunch.live` in the
         /// app's own engine, none in a headless one.
         var openFresh: (@Sendable (FreshSessionLaunch) -> Bool)?
+        /// Tucks a folded session's window away, or brings it back, through its terminal's own script (`TerminalTuck`,
+        /// P1302); nil: `TerminalTuck.live` in the app's own engine, none in a headless one, so no test touches a window.
+        var tuckWindow: (@Sendable (TerminalTuck.Move, ReplyRoute) -> TuckOutcome)?
+        /// Calls `check` after `delay` seconds: a held reply's look at whether its turn ended (P1306). Tests run them on
+        /// their own clock.
+        var scheduleFoldCheck: @MainActor @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void = { delay, check in
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(delay))
+                check()
+            }
+        }
         var now: @Sendable () -> Date = { Date() }
         /// Calls `check` after `delay` seconds; the engine asks for one per held Done. Tests record the checks and
         /// run them on their own clock, or call `flushHeldSignals()` themselves.
@@ -156,6 +170,15 @@ public final class SessionEngine {
         var subagentHoldBackstop: TimeInterval = SubagentHold.limit + SubagentHold.backstopMargin
         /// Whether an agent's pid still runs (C11: a crashed agent sends no SessionEnd).
         var processExists: @Sendable (Int32) -> Bool = { pid in kill(pid, 0) == 0 || errno == EPERM }
+        /// A process's parent and its short name (`sysctl`): a folded session keeps its agent's, so it can tell a window
+        /// that closed (its shell went too) from an agent that quit, and a pid given to another program since from its
+        /// agent (P1415, P1420).
+        var parentPID: @Sendable (Int32) -> Int32? = { SystemProcessTable().entry(pid: $0)?.parentPID }
+        var processName: @Sendable (Int32) -> String? = { SystemProcessTable().entry(pid: $0)?.name }
+        /// Calls `exited` once the process at a pid ends (`AgentExitWatch`): a folded session's agent, so its card learns
+        /// at once that its window closed mid-turn (P1416). nil: the live watch in the app's own engine, none in a
+        /// headless one.
+        var watchProcessExit: (@MainActor @Sendable (Int32, @escaping @MainActor @Sendable () -> Void) -> (any HookWatchToken)?)?
         /// The demo and renders: a request is shown at once, as one that already waited.
         var confirmsRequestsAtOnce = false
         /// A Codex rollout's reviewer, approval policy and strict review, read from its last 256 KB (C6).
@@ -198,6 +221,7 @@ public final class SessionEngine {
         didSet {
             bridgeServer?.updateStateSnapshot(state)
             retagSessions()
+            foldsFollowState()
         }
     }
     public internal(set) var isBridgeReady = false
@@ -259,7 +283,7 @@ public final class SessionEngine {
     @ObservationIgnored var attentionWindows: Set<String> = []
     /// Answer subagents on the island (`answersSubagents`), read by the broker on its own queue (P350).
     @ObservationIgnored let subagentHoldSwitch = SubagentHoldSwitch()
-    /// Answer Codex on the island (`answersCodex`), read by the broker on its own queue (P470), and the Codex requests it
+    /// Answer Codex in Juice (`answersCodex`), read by the broker on its own queue (P470), and the Codex requests it
     /// held that are not entered yet: true while the helper waits, false once it ended.
     @ObservationIgnored let codexHoldSwitch = SubagentHoldSwitch()
     @ObservationIgnored var pendingCodexHolds: [String: Bool] = [:]
@@ -340,11 +364,48 @@ public final class SessionEngine {
     var scopes: [String: SessionScope] = [:]
     /// What each Codex thread's hooks showed of the process that runs it (P257); read only to weigh `scopes`.
     @ObservationIgnored var codexHands: [String: CodexHand] = [:]
+    /// Sessions the owner went on with from a folded card through the agent's own resume (`SessionResumer`, P1327,
+    /// P1328), and those whose run is under way: read on the request broker's queue too. Memory only.
+    @ObservationIgnored let islandResumes = IslandResumeBook()
     /// Settings › Island › Show scripted runs: the lists show scripted runs too. They never notify either way.
     public var showsScriptedRuns = false
     /// Settings › General › Permission modes on cards: a Claude plan or approval offers its mode buttons
     /// (`modeChoices(for:)`). Off: none shows and none is sent.
     public var offersModeChoices = true
+    /// Route (b) of a folded session whose tab is gone: the agent's own resume (`SessionResumer`, which the app's
+    /// `LiveSessions` sets as it makes the engine). nil (every headless engine): a card whose tab is gone says "Open in
+    /// terminal to reply".
+    @ObservationIgnored public var conversationResume: (any ConversationResuming)?
+    /// Claude Code's own background sessions (`ClaudeBackgrounder`, wave 8, P1450 on), which the app's `LiveSessions`
+    /// sets as it makes the engine. nil (every headless engine): Send to island types nothing and no card is a
+    /// background one.
+    @ObservationIgnored public var claudeBackground: ClaudeBackgrounder?
+    /// Settings › Agents › Keep Claude sessions running when their window closes: Send to island moves a Claude Code
+    /// session into Claude Code's background (P1450). Off in a headless engine unless a test sets it.
+    public var keepsClaudeRunning = false
+    /// Interactive sessions whose conversation went on in the background under another id, to that id (P1455): their
+    /// rows stay out of the island's list, as the card of the new id stands for them.
+    public internal(set) var movedConversations: [String: String] = [:]
+    @ObservationIgnored var backgroundReadScheduled = false
+    /// Folded sessions whose `/background`, waiting for their turn's end, has a check waiting (P1452).
+    @ObservationIgnored var backgroundMoveChecks: Set<String> = []
+    /// The background move each fold started, so a test can wait for it.
+    @ObservationIgnored var backgroundMoves: [String: Task<Void, Never>] = [:]
+    /// Whether each pid the notes named is a Codex app-server, and when that was asked (P1485).
+    @ObservationIgnored var codexServerAnswers: [Int32: (server: Bool, at: Date)] = [:]
+    /// Open in Claude, Codex or another agent's app, and back (`SessionHandoff`, wave 8, P1510), which the app's
+    /// `LiveSessions` sets as it makes the engine. nil (every headless engine but a test's): nothing is offered.
+    @ObservationIgnored public var appHandoff: SessionHandoff?
+    /// Sessions sent to the island, by id (`SessionEngine+Fold`, P1300 to P1324). Observed: their cards follow it.
+    public internal(set) var folds: [String: FoldedSession] = [:]
+    /// Folded sessions whose held reply has a check waiting (P1306).
+    @ObservationIgnored var foldChecks: Set<String> = []
+    /// Folded sessions whose agent was found gone mid-turn, with the verdict's check waiting (P1415).
+    @ObservationIgnored var foldStopChecks: Set<String> = []
+    /// Each folded session's watch on its agent's exit, and the pid it watches (P1416).
+    @ObservationIgnored var foldExitWatches: [String: (pid: Int32, token: any HookWatchToken)] = [:]
+    /// The fold's last decisions, newest last, for Diagnostics' Copy Report (P1430): ids and states only.
+    @ObservationIgnored public internal(set) var foldNotes: [FoldNote] = []
 
     @ObservationIgnored let configuration: Configuration
     @ObservationIgnored let dependencies: Dependencies
@@ -665,6 +726,10 @@ public final class SessionEngine {
             signals.dropHeld(sessionID)
         }
         noteAppliedForHookNotes(event, sessionID: sessionID, ingress: ingress, before: before, now: now)
+        if folds[sessionID] != nil { noteFoldTurn(event, sessionID: sessionID, ingress: ingress, before: before) }
+        // A session Codex's background service runs: whether it holds the thread, as it starts and as a turn begins or
+        // ends there (P1487).
+        if ingress == .bridge, Self.asksCodexService(event, ingress: ingress, before: before) { lookAtCodexService(sessionID) }
         noteForTitle(event, sessionID: sessionID, ingress: ingress, before: before, now: now)
         // Every new hold gets its own check, whether or not another session's Done is held earlier.
         if let dueAt = signals.dueAt(for: sessionID), dueAt != heldBefore { scheduleSignalCheck(at: dueAt, now: now) }

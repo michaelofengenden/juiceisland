@@ -57,6 +57,10 @@ struct LiveReaders {
     var claudeStamp: ClaudeIdentityWatch.StatProfile = { ClaudeIdentityWatch.stamp(folder: $0) }
     /// The home folder the providers' default folders (`~/.claude`, `~/.codex`) live in.
     var home: String = NSHomeDirectory()
+    /// Refresh login's terminal (P1551): the owner's usual one, and the opener that types its line into a new window of it,
+    /// on the owner's click only. The defaults open nothing: only `LiveReaders.app` opens a window.
+    var usualHost: @Sendable () -> FreshSessionLaunch.Host = { .terminal }
+    var openTerminal: @Sendable (FreshSessionLaunch) async -> Bool = { _ in false }
 
     /// The real readers. Only the release build may make them: a dev build, a test or a render that got here is a bug,
     /// stopped before anything is read.
@@ -77,7 +81,9 @@ struct LiveReaders {
             setBrowserProfile: { ChromeProfiles.selectedDirectory = $0 },
             browserProfiles: { ChromeProfiles.list() },
             systemEvents: LiveSystemEvents(),
-            tickInterval: 5)
+            tickInterval: 5,
+            usualHost: { FreshSessionLaunch.liveUsualHost() },
+            openTerminal: { await FreshSessionLaunch.openLive($0) })
     }
 
     /// Settings › Accounts' discovery: `ProfileFolderDiscovery`, which only asks whether a folder's `.claude.json`,

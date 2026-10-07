@@ -42,6 +42,10 @@ protocol UsageModel: AnyObject, Observable {
     /// moves its next read up to where they end. `manualRead` says which, for the menu to say so.
     func refreshAccount(_ id: String)
     func manualRead(_ id: String) -> RefreshScheduler.ManualRead
+    /// Refresh login, on a lapsed Codex login's battery or Accounts row (P1551): on the owner's click, a new window of their
+    /// usual terminal running Codex in that login's folder, which refreshes the login. A model that reads nothing opens
+    /// nothing.
+    func refreshLogin(_ id: String)
     /// Diagnostics › Accounts: when a login's next read is due by its schedule, and whether one runs now. nil for a model
     /// that schedules nothing (the demo, Juice's readings), and while the readers wait.
     func schedule(of loginID: String) -> ReadSchedule?
@@ -74,6 +78,7 @@ extension UsageModel {
     /// Demo and mirror models read nothing: their batteries' Refresh is `refreshUnavailableReason`.
     func refreshAccount(_ id: String) {}
     func manualRead(_ id: String) -> RefreshScheduler.ManualRead { .unavailable }
+    func refreshLogin(_ id: String) {}
     func schedule(of loginID: String) -> ReadSchedule? { nil }
     func question(forFolder id: String) -> FolderQuestion { .none }
 

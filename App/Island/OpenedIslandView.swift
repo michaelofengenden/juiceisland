@@ -107,6 +107,8 @@ struct OpenedIslandView: View {
     var ui = IslandUIState()
     /// The header group's height as last laid out: the list may take what the display leaves under it.
     @State private var headerHeight = IslandTheme.Metrics.headerHeight
+    /// The folded session open in the stack, as the owner chose it (P1307); nil: the newest.
+    @State private var foldedChosen: String?
     var animated = true
     var actions = IslandViewActions()
     /// The live island's channels; nil draws the standalone island.
@@ -268,13 +270,21 @@ struct OpenedIslandView: View {
                 .islandPart(.usage, live, ui: ui, reports: block)
                 .modifier(IslandCollapse(collapsed: !block))
             }
-            if layout.total == 0 {
+            let folded = env.sessions.folded
+            if !folded.isEmpty {
+                FoldedStackView(cards: folded, animated: animated, showCard: actions.openRow, chosen: $foldedChosen)
+                    .padding(.top, 4)
+                    // A reply half typed keeps the island open, as a card's does (P96, P292).
+                    .environment(\.cardDraftReporter) { [ui] holds in if ui.cardDraft != holds { ui.cardDraft = holds } }
+                    .islandPart(.folded, live, ui: ui)
+            }
+            if layout.total == 0, folded.isEmpty {
                 // Where to start, not just "No sessions" (P965).
                 NoSessionsLine()
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .islandPart(.empty, live, ui: ui)
-            } else {
+            } else if layout.total > 0 {
                 // The rows, the Codex group and the footer, under one peek layer: a row's peek lies over them (P311).
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
@@ -325,10 +335,17 @@ struct OpenedIslandView: View {
     @ViewBuilder private var list: some View {
         let style = env.settings.islandStyle
         let layout = IslandListLayout.make(rows: env.sessions.rows, style: style, showAll: ui.showAll, now: env.sessions.now)
-        if layout.total == 0 {
+        let folded = env.sessions.folded
+        if !folded.isEmpty {
+            FoldedStackView(cards: folded, animated: animated, showCard: actions.openRow, chosen: $foldedChosen)
+                .padding(.top, 4)
+        }
+        if layout.total == 0, folded.isEmpty {
             NoSessionsLine()
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
+        } else if layout.total == 0 {
+            EmptyView()
         } else if style == .clean {
             VStack(spacing: 0) {
                 VStack(spacing: 0) {

@@ -34,7 +34,11 @@ struct LiquidLiveTests {
         #expect(theme == .black || rig.canvas.layers.glass != nil)
         for step in [{ rig.open() }, { rig.director.send(.close(.fold)) }, { rig.open() }] as [@MainActor () -> Void] {
             step()
-            await FramePerf.wait(1.8)
+            // At rest with every layer swept, however late a loaded run's main actor lets the jobs and the sweep run
+            // (looks counted, not a set 1.8 s, P1258); a layer never swept still fails here.
+            await FramePerf.settle(rig) {
+                !rig.director.model.inMotion && !rig.ui.liquid.playing && Self.animated(rig).allSatisfy { $0.animationKeys() == nil }
+            }
             #expect(Self.animated(rig).allSatisfy { $0.animationKeys() == nil }, "\(theme): an animation left on a layer")
             let model = rig.director.model
             #expect(!model.inMotion && model.reservoir == nil && model.liquid(at: IslandMotionDirector.now).isRest, "\(theme)")
@@ -69,19 +73,41 @@ struct LiquidLiveTests {
             for layer in layers.glass?.pathLayers ?? [] {
                 let a = layer.animation(forKey: IslandSurfaceLayers.key) as? CAKeyframeAnimation
                 #expect((a?.values?.count ?? 0) == values.count, "\(theme): the glass carries other keyframes")
+                #expect(a?.beginTime == fill.beginTime, "\(theme): the glass begins apart from the fill")
             }
         }
-        let poll = Poll(fill: layers.fill, clip: layers.clip, glass: layers.glass?.pathLayers ?? [], height: height)
+        let poll = Poll(fill: layers.fill, clip: layers.clip, glass: layers.glass?.pathLayers ?? [], height: height,
+                        key: IslandSurfaceLayers.key)
         poll.start()
+        var commits: [TimeInterval] = []
         for (open, wait) in [(true, 0.9), (false, 0.12), (true, 0.9), (false, 1.0)] {
             if open { rig.open() } else { rig.director.send(.close(.fold)) }
             sameKeyframes()
+            // The event's install committed now, as the run loop would at the end of this turn (late under load).
+            CATransaction.flush()
+            commits.append(ProcessInfo.processInfo.systemUptime)
             await FramePerf.wait(wait)
         }
-        let result = poll.stop()
-        print("\(theme): \(result.reads) reads, fill against mask \(result.clip) pt, against the glass \(result.glass) pt, \(installs) liquid plans")
-        #expect(installs >= 3 && result.reads > 300)
-        #expect(result.clip <= 0.01 && result.glass <= 0.01, "\(theme): \(result)")
+        let reads = poll.stop()
+        // Reads from an install to its commit are left out: until the commit, `presentation()` off the main thread can
+        // see one layer's new path without its animation, which the render server, given only commits, never draws
+        // (`CoreAnimationOutlineLiveTests.committed`); a read within an install, one layer's plan new and the next's
+        // old, is left out by the poll itself. Both showed the whole island apart (293 pt) in loaded runs (P1257).
+        let ends = rig.probe.turns.map { Double($0.end) / 1e9 } + commits
+        let windows = log.plans.map { install in (install.at - 0.001, ends.filter { $0 >= install.at }.min() ?? .infinity) }
+        func inWindow(_ from: TimeInterval, _ to: TimeInterval) -> Bool { windows.contains { to >= $0.0 && from <= $0.1 } }
+        let kept = reads.samples.filter { !inWindow($0.from, $0.to) }
+        // A torn read is the main thread midway through handing a plan over, or through a sweep taking ended animations
+        // off; anything else is the layers out of step (a glass that begins apart from the fill, a mask with other
+        // paths), which this test exists to catch, so it is never dropped quietly (P1283).
+        let unexplained = reads.torn.filter { !$0.sweep && !inWindow($0.from, $0.to) }
+        let clip = kept.map(\.clip).max() ?? 0, glass = kept.map(\.glass).max() ?? 0
+        print("\(theme): \(kept.count) reads, fill against mask \(clip) pt, against the glass \(glass) pt, \(installs) liquid plans; "
+              + "\(reads.samples.count - kept.count) reads before a commit and \(reads.torn.count) within an install or a sweep "
+              + "left out, \(unexplained.count) out of step")
+        #expect(installs >= 3 && kept.count > 300)
+        #expect(unexplained.isEmpty, "\(theme): \(unexplained.count) reads found the layers out of step outside an install")
+        #expect(clip <= 0.01 && glass <= 0.01, "\(theme): fill against mask \(clip) pt, against the glass \(glass) pt")
         rig.stop()
     }
 
@@ -90,71 +116,126 @@ struct LiquidLiveTests {
     @Test(arguments: [JuiceTheme.black, .glass])
     func swiftUIsOutlinePlaysTheUnionAndRests(_ theme: JuiceTheme) async throws {
         _ = NSApplication.shared
-        let rig = FramePerf.IslandRig(style: .clean, glyph: .liquid, glyphsMove: false, outline: .swiftUI, tuning: Self.liquid, theme: theme)
+        // The sessions' clock pinned: each minute's turn redraws the rows' ages, and the island with them, which a loaded
+        // run's long look at the rest caught as the clip drawing (once a minute, a few seconds past it; P1261).
+        let made = Date()
+        let rig = FramePerf.IslandRig(style: .clean, glyph: .liquid, glyphsMove: false, outline: .swiftUI, tuning: Self.liquid, theme: theme,
+                                      sessionsClock: { made })
         await rig.start()
+        await FramePerf.rest(rig)
         for open in [true, false] {
-            let before = rig.outlines.paths.count
-            if open { rig.open() } else { rig.director.send(.close(.fold)) }
-            #expect(rig.ui.liquid.playing && rig.ui.liquid.plan?.drawsLiquid == true, "\(theme): nothing liquid plays")
-            // The clip's frames come as the run loop turns (later under load): some frame draws the union's own.
-            var drawn = false
-            for _ in 0..<40 where !drawn {
-                await FramePerf.wait(0.02)
-                drawn = rig.outlines.paths.dropFirst(before).contains(where: \.liquid)
+            // Some frame draws the union's own while the plan plays: each look lays the rig out and commits it as a
+            // display frame would (`FramePerf.frame`). A frame is owed only by a look made while the plan's union draws
+            // more than the body (`LiquidParams.isRest` false, now and a moment on); a main actor held through all of
+            // that (a full run's) makes none, and the step plays again from its rest, at most four times (P1258).
+            var drawn = false, owed = false
+            for attempt in 0..<5 where !drawn && !owed {
+                if attempt > 0 {
+                    if open { rig.director.send(.close(.fold)) } else { rig.open() }
+                    await FramePerf.settle(rig) { !rig.director.model.inMotion && !rig.ui.liquid.playing }
+                }
+                let before = rig.outlines.paths.count
+                if open { rig.open() } else { rig.director.send(.close(.fold)) }
+                #expect(rig.ui.liquid.playing && rig.ui.liquid.plan?.drawsLiquid == true, "\(theme): nothing liquid plays")
+                let plan = rig.ui.liquid.plan
+                let end = plan?.end ?? 0
+                await Looks.until(10, every: 0.02) {
+                    let now = IslandMotionDirector.now
+                    let liquid = [now, now + 0.03].allSatisfy { plan?.liquid(at: $0).map { !$0.isRest } ?? false }
+                    FramePerf.frame(rig)
+                    drawn = rig.outlines.paths.dropFirst(before).contains(where: \.liquid)
+                    owed = owed || liquid
+                    return drawn || IslandMotionDirector.now >= end
+                }
             }
             #expect(drawn, "\(theme): the clip draws nothing liquid mid-motion")
-            await FramePerf.wait(1.8)
+            await FramePerf.settle(rig) { !rig.director.model.inMotion && !rig.ui.liquid.playing }
             #expect(!rig.ui.liquid.playing && (rig.ui.liquid.params?.isRest ?? true), "\(theme): still playing at rest")
+            // At rest the clip builds nothing: once the motion's last frames are drawn (late under load), a stretch of
+            // looks, each a frame, adds none. A clip that drew every frame at rest never goes still and fails here.
+            var still = 0, last = rig.outlines.paths.count
+            await FramePerf.settle(rig) {
+                let count = rig.outlines.paths.count
+                still = count == last ? still + 1 : 0
+                last = count
+                return still >= 6
+            }
             let rest = rig.outlines.paths.count
-            await FramePerf.wait(0.3)
+            for _ in 0..<6 {
+                await FramePerf.wait(0.05)
+                FramePerf.frame(rig)
+            }
             #expect(rig.outlines.paths.count == rest, "\(theme): the clip draws at rest")
         }
         rig.stop()
     }
 
-    /// Reads the fill's, the mask's and the glass's presentation every 4 ms on its own thread.
+    /// Reads the fill's, the mask's and the glass's presentation every 4 ms on its own thread, each read with when it
+    /// began and ended and how far the mask and the glass stood from the fill. A read that crossed an install is not
+    /// kept (`torn`): the main thread hands a plan to the layers one after another, so a read between two of them sees
+    /// the new plan on one and the old on the next. One install gives every layer the same begin and the fill and the
+    /// mask the same path, so a read is whole when they share both, the same before and after it. Each torn read keeps
+    /// its times, and whether a sweep could explain it (`Torn.sweep`), for the test to hold the rest against the installs.
     final class Poll: @unchecked Sendable {
+        struct Read { var from: TimeInterval; var to: TimeInterval; var clip: CGFloat; var glass: CGFloat }
+        /// A torn read: `sweep` when the layers stood, before and after it, as a sweep leaves them midway (each layer's
+        /// animation gone or the one plan's, the fill's and the mask's paths one).
+        struct Torn { var from: TimeInterval; var to: TimeInterval; var sweep: Bool }
         nonisolated(unsafe) let fill: CAShapeLayer
         nonisolated(unsafe) let clip: CAShapeLayer
         nonisolated(unsafe) let glass: [CAShapeLayer]
         let height: CGFloat
+        let key: String
         private let lock = NSLock()
         private var running = true
-        private var result = (reads: 0, clip: CGFloat(0), glass: CGFloat(0))
+        private var samples: [Read] = []
+        private var torn: [Torn] = []
 
-        init(fill: CAShapeLayer, clip: CAShapeLayer, glass: [CAShapeLayer], height: CGFloat) {
+        init(fill: CAShapeLayer, clip: CAShapeLayer, glass: [CAShapeLayer], height: CGFloat, key: String) {
             self.fill = fill
             self.clip = clip
             self.glass = glass
             self.height = height
+            self.key = key
+        }
+
+        /// Each layer's animation's begin (-1 for none), and whether the fill's and the mask's paths are one.
+        private func plan() -> (begins: [CFTimeInterval], same: Bool) {
+            (([fill, clip] + glass).map { $0.animation(forKey: key)?.beginTime ?? -1 }, fill.path == clip.path)
+        }
+
+        /// As a sweep leaves the layers midway: one plan's begin on those it has not reached yet, none on the rest.
+        private static func sweeping(_ plan: (begins: [CFTimeInterval], same: Bool)) -> Bool {
+            plan.same && Set(plan.begins.filter { $0 >= 0 }).count <= 1
         }
 
         func start() {
             let thread = Thread { [self] in
+                func d(_ a: CGRect, _ b: CGRect) -> CGFloat {
+                    max(abs(a.minX - b.minX), abs(a.maxX - b.maxX), abs(a.minY - b.minY), abs(a.maxY - b.maxY))
+                }
                 while true {
                     lock.lock()
                     let go = running
                     lock.unlock()
                     guard go else { return }
+                    let from = ProcessInfo.processInfo.systemUptime, before = plan()
                     CATransaction.flush()
                     // One transaction: every layer's presentation at the same moment.
                     let f = fill.presentation()?.path?.boundingBoxOfPath, c = clip.presentation()?.path?.boundingBoxOfPath
                     let g = glass.compactMap { $0.presentation()?.path?.boundingBoxOfPath }
                     CATransaction.flush()
-                    if let f, let c, !f.isNull, !c.isNull {
-                        func d(_ a: CGRect, _ b: CGRect) -> CGFloat {
-                            max(abs(a.minX - b.minX), abs(a.maxX - b.maxX), abs(a.minY - b.minY), abs(a.maxY - b.maxY))
-                        }
-                        lock.lock()
-                        result.reads += 1
-                        result.clip = max(result.clip, d(f, c))
-                        for box in g where !box.isNull {
-                            // The glass is y up in the canvas.
-                            let down = CGRect(x: box.minX, y: height - box.maxY, width: box.width, height: box.height)
-                            result.glass = max(result.glass, d(f, down))
-                        }
-                        lock.unlock()
+                    let after = plan(), to = ProcessInfo.processInfo.systemUptime
+                    lock.lock()
+                    if before != after || Set(before.begins).count != 1 || !before.same {
+                        torn.append(Torn(from: from, to: to, sweep: Self.sweeping(before) && Self.sweeping(after)))
+                    } else if let f, let c, !f.isNull, !c.isNull {
+                        // The glass is y up in the canvas.
+                        let down = g.filter { !$0.isNull }
+                            .map { CGRect(x: $0.minX, y: height - $0.maxY, width: $0.width, height: $0.height) }
+                        samples.append(Read(from: from, to: to, clip: d(f, c), glass: down.map { d(f, $0) }.max() ?? 0))
                     }
+                    lock.unlock()
                     usleep(4000)
                 }
             }
@@ -162,11 +243,11 @@ struct LiquidLiveTests {
             thread.start()
         }
 
-        func stop() -> (reads: Int, clip: CGFloat, glass: CGFloat) {
+        func stop() -> (samples: [Read], torn: [Torn]) {
             lock.lock()
             defer { lock.unlock() }
             running = false
-            return result
+            return (samples, torn)
         }
     }
 
@@ -200,8 +281,9 @@ struct LiquidLiveTests {
                 } else {
                     run = s
                 }
-                // The sample's clock and the transaction's can stand a fraction of a millisecond apart.
-                let near = stride(from: -0.002, through: 0.002, by: 0.0002).compactMap { union(s.t + $0) }
+                // The sample's clock and the transaction's can stand a fraction of a millisecond apart, and a preempted
+                // read more: held from 2 ms before the read's first clock to 2 ms after its last (`Sample.end`, P1262).
+                let near = stride(from: s.t - 0.002, through: max(s.t, s.end) + 0.002, by: 0.0002).compactMap { union($0) }
                 lag = max(lag, near.map { abs(s.h - $0) }.min() ?? abs(s.h - h))
             }
             print("Liquid, stall \(Int(stall * 1000)) ms: frozen \(frozen * 1000) ms, lag \(lag) pt, \(samples.count) samples")

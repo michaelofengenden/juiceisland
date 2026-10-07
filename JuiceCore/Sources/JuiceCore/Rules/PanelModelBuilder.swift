@@ -27,9 +27,12 @@ public enum PanelModelBuilder {
 
     /// Batteries for `entries`, in their order within each provider. `attention` raises the sign-in badge whatever the
     /// batteries say (a signed-out folder that no battery stands for). `history` (by the entries' ids) gives an available
-    /// battery its run-out, when a window runs out before its reset at the current pace (P125).
+    /// battery its run-out, when a window runs out before its reset at the current pace (P125). `loginFiles` (by the
+    /// entries' ids) is when each Codex login's file last changed, by `stat` alone: a login whose reads keep failing while
+    /// it is over 9 days old is lapsed (P1550), and one over 8 days old whose reads still work says so in its hover (P1553).
     public static func build(entries: [PanelEntry], records: [String: AccountRecord], signingIn: Set<String>, attention: Bool = false,
-                             money: [MoneyRowModel], now: Date, history: UsageHistory = .empty) -> PanelModel {
+                             money: [MoneyRowModel], now: Date, history: UsageHistory = .empty,
+                             loginFiles: [String: Date] = [:]) -> PanelModel {
         var rows: [ProviderRowModel] = []
         var attention = attention
         for provider in Provider.allCases {
@@ -37,7 +40,8 @@ public enum PanelModelBuilder {
             guard !group.isEmpty else { continue }
             var states: [String: AccountState] = [:]
             for entry in group {
-                states[entry.id] = state(of: entry.id, records: records, signingIn: signingIn, provider: provider, now: now)
+                states[entry.id] = state(of: entry.id, records: records, signingIn: signingIn, provider: provider, now: now,
+                                         loginFiles: loginFiles)
             }
             let next = group.first { (states[$0.id] ?? .unknown).isAvailable }
             let availability = Rules.availability(states: group.map { states[$0.id] ?? .unknown })
@@ -48,10 +52,11 @@ public enum PanelModelBuilder {
                 let runOut = state.isAvailable
                     ? records[entry.id]?.lastGood.flatMap { UsageForecast.runOut($0, account: entry.id, history: history) }
                         .flatMap { $0.resetsAt > now ? $0 : nil } : nil
+                let aging = Rules.loginAging(provider: provider, record: records[entry.id], loginFileChanged: loginFiles[entry.id], now: now)
                 return BatteryModel(id: entry.id, alias: entry.alias, state: state, isNext: entry.id == next?.id,
                                     hoverLabel: batteryLabel(alias: entry.alias, state: state, record: records[entry.id], now: now,
-                                                             runOut: runOut),
-                                    runOut: runOut)
+                                                             runOut: runOut, loginAging: aging),
+                                    runOut: runOut, loginAging: aging)
             }
             let oldest = group.compactMap { records[$0.id]?.lastGood?.readAt }.min().map { Formatting.age(of: $0, now: now) }
             rows.append(ProviderRowModel(provider: provider, batteries: batteries, availability: availability, nextAlias: next?.alias,
@@ -61,26 +66,31 @@ public enum PanelModelBuilder {
         return PanelModel(rows: rows, money: money, attentionNeeded: attention)
     }
 
-    /// One account's battery state from its record (`Rules.state`).
-    public static func state(of id: String, records: [String: AccountRecord], signingIn: Set<String>, provider: Provider, now: Date) -> AccountState {
+    /// One account's battery state from its record (`Rules.state`), lapsed by `loginFiles` (`Rules.loginLapsed`, P1550).
+    public static func state(of id: String, records: [String: AccountRecord], signingIn: Set<String>, provider: Provider, now: Date,
+                             loginFiles: [String: Date] = [:]) -> AccountState {
         let record = records[id]
         return Rules.state(reading: record?.lastGood, lastError: record?.lastError, signingIn: signingIn.contains(id), provider: provider,
                            now: now, restored: record?.restored == true, noPlan: record?.isNoPlan == true,
-                           usageBased: record?.isNoLimits == true)
+                           usageBased: record?.isNoLimits == true,
+                           loginLapsed: Rules.loginLapsed(provider: provider, record: record, loginFileChanged: loginFiles[id], now: now))
     }
 
     /// Spec §2.5, battery column. Windows that do not count toward the battery are appended by name, then a Codex
     /// account's credits and reset credits (#22), only in the states that show usage and its read age; sign-in needed
-    /// and signing in have no current reading to show. A run-out (P125) follows the window it is about.
-    public static func batteryLabel(alias: String, state: AccountState, record: AccountRecord?, now: Date, runOut: RunOut? = nil) -> String {
+    /// and signing in have no current reading to show. A run-out (P125) follows the window it is about. A Codex login
+    /// over 8 days old whose reads still work ends with the early word (`loginAging`, P1553).
+    public static func batteryLabel(alias: String, state: AccountState, record: AccountRecord?, now: Date, runOut: RunOut? = nil,
+                                    loginAging: Bool = false) -> String {
         let label = countedBatteryLabel(alias: alias, state: state, record: record, now: now, runOut: runOut)
         switch state {
         case .available, .usedUp, .stale: break
-        case .signInNeeded, .signingIn, .unknown, .noPlan, .noLimits: return label
+        case .signInNeeded, .signingIn, .unknown, .noPlan, .noLimits, .loginLapsed: return label
         }
         let current = record?.lastGood.map { Rules.current($0, now: now) }
         let extra = (current?.windows ?? []).filter { !$0.isCounted }.map { "\($0.displayLabel) \($0.percentLeft)% left" }
-        return ([label] + extra + (record?.lastGood.map(creditParts) ?? [])).joined(separator: " · ")
+        let early = loginAging ? [Rules.loginAgingWords] : []
+        return ([label] + extra + (record?.lastGood.map(creditParts) ?? []) + early).joined(separator: " · ")
     }
 
     /// "579 credits", "2 reset credits, first until 3 Oct": what a Codex reading says beyond its windows, when it has any.
@@ -141,6 +151,9 @@ public enum PanelModelBuilder {
             return "\(alias) · \(NoPlanStreak.hover)"
         case .noLimits:
             return "\(alias) · \(NoPlanStreak.usageHover)"
+        case .loginLapsed:
+            // Never "rate limited", whatever the reads said (P1550).
+            return "\(alias) · \(Rules.loginLapsedWords)"
         case .unknown:
             if let error = record?.lastError { return "\(alias) · no reading yet · \(error.shortDescription)" }
             return "\(alias) · no reading yet"

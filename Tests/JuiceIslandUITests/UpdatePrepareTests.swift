@@ -35,6 +35,8 @@ struct UpdatePrepareTests {
                                            logFile: root.appendingPathComponent("logs/update.log"))
             try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+            // A step waits for its go file however long the test takes (a step that gave up after 90 s ran on unseen
+            // while a full run held the main actor, P1253), until the sandbox or the test process is gone.
             // A prepare ends with the line in <script>.result, after <script>.prepare-go when <script>.hold is there;
             // TERM ends it as stopped. With <script>.busy it finds the update lock taken: it writes nothing of its own and exits,
             // while the run that holds the lock (another bundle's) writes the lines in that file. An install and an
@@ -45,8 +47,9 @@ struct UpdatePrepareTests {
             self="$0"
             print -r -- "mode:${JI_RUN_MODE:-update} status:${JI_STATUS_FILE##*/} log:${JI_LOG_FILE##*/} signal:${JI_APP_QUIT_SIGNAL:-none}" >> "$self.calls"
             status_to() { print -r -- "$1" >> "$JI_STATUS_FILE" }
-            step() { local go="$self.${1:-go}" end=$(( SECONDS + \(Int(UpdatePrepareTests.patience) + 30) ))
-              until [[ -e "$go" ]] || (( SECONDS > end )); do [[ -e "$self" ]] || exit 0; sleep 0.02; done; rm -f "$go" }
+            runner=$PPID
+            step() { local go="$self.${1:-go}"
+              until [[ -e "$go" ]]; do [[ -e "$self" ]] && kill -0 $runner 2>/dev/null || exit 0; sleep 0.02; done; rm -f "$go" }
             case ${JI_RUN_MODE:-update} in
               (prepare)
                 [[ ! -e "$self.busy" ]] || { cat "$self.busy" >> "$JI_STATUS_FILE"; exit 1 }
@@ -99,10 +102,10 @@ struct UpdatePrepareTests {
                          quitSignal: { "USR2" }, quit: quit, context: world.context)
     }
 
+    /// Waits until `done` holds, for `patience`'s worth of looks at most (`Looks`): counted looks, not the clock, as a
+    /// full run has held the main actor for minutes (P1253).
     private func wait(until done: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(Self.patience)
-        while Date() < deadline, !done() { try? await Task.sleep(for: .milliseconds(10)) }
-        return done()
+        await Looks.until(Self.patience, done)
     }
 
     /// A check that finds origin/main ahead prepares it, at the prepare's own files and with no quit signal; its

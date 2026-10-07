@@ -121,6 +121,72 @@ enum WindowFold {
         CATransaction.commit()
     }
 
+    /// A terminal window sent to the island (P1302): a plain glass shape the size of its frame, never its pixels (the app
+    /// has no Screen Recording and never asks for it), rounded as a window is, with the fold's shadow.
+    static func glassLayers(stage: Stage, radius: CGFloat = terminalRadius) -> CALayer {
+        let ghost = CALayer()
+        ghost.frame = CGRect(origin: .zero, size: stage.frame.size)
+        ghost.allowsGroupOpacity = true
+        let shadow = CALayer()
+        shadow.backgroundColor = CGColor(gray: 0, alpha: 0.35)
+        shadow.shadowColor = .black
+        shadow.shadowOpacity = 0.4
+        shadow.shadowRadius = 20
+        shadow.shadowOffset = CGSize(width: 0, height: -12)
+        // The glass: a cool frost over whatever is behind, a brighter rim, and a sheen that fades down its face.
+        let glass = CAGradientLayer()
+        glass.colors = [CGColor(gray: 1, alpha: 0.30), CGColor(gray: 1, alpha: 0.14)]
+        glass.startPoint = CGPoint(x: 0.5, y: 1)
+        glass.endPoint = CGPoint(x: 0.5, y: 0)
+        glass.borderColor = CGColor(gray: 1, alpha: 0.55)
+        glass.borderWidth = 1
+        glass.masksToBounds = true
+        for layer in [shadow, glass] {
+            layer.cornerRadius = radius
+            layer.frame = stage.from
+            ghost.addSublayer(layer)
+        }
+        return ghost
+    }
+
+    /// A terminal window's corner radius on macOS 26, near enough for a shape that is gone in 0.75 s.
+    static let terminalRadius: CGFloat = 12
+
+    /// A terminal window sent to the island (P1302): its glass shape (`glassLayers`) flies from where the window was
+    /// into the pill on the window fold's own path, curve and fade (`play`), in a still, click-through window of its own,
+    /// while the terminal puts the window itself into the Dock. Reduce Motion: nothing moves.
+    @discardableResult
+    static func flyIn(from frame: CGRect, into pill: CGRect) -> Handle {
+        let handle = Handle()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, frame.width > 1, frame.height > 1 else { return handle }
+        let stage = stage(window: frame, pill: pill)
+        let ghost = NSWindow(contentRect: stage.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        ghost.isOpaque = false
+        ghost.backgroundColor = .clear
+        ghost.hasShadow = false
+        ghost.ignoresMouseEvents = true
+        ghost.level = .statusBar
+        ghost.isReleasedWhenClosed = false
+        ghost.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+        let host = NSView(frame: CGRect(origin: .zero, size: stage.frame.size))
+        host.layer = CALayer()
+        host.wantsLayer = true
+        let layers = glassLayers(stage: stage)
+        host.layer?.addSublayer(layers)
+        ghost.contentView = host
+        play(layers, stage: stage)
+        CATransaction.flush()
+        ghost.orderFrontRegardless()
+        handle.ghost = ghost
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !handle.cancelled else { return }
+            handle.ghost = nil
+            ghost.orderOut(nil)
+        }
+        return handle
+    }
+
     @discardableResult
     static func fold(_ window: NSWindow, into pill: CGRect? = nil, landing: @escaping @MainActor () -> Void = {},
                      completion: @escaping @MainActor () -> Void) -> Handle {

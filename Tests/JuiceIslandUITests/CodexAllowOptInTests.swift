@@ -5,7 +5,7 @@ import Testing
 @testable import IslandEngine
 @testable import JuiceIslandUI
 
-/// CXH, the owner's "do all of them" of 2026-09-28, item 22 (P470): Settings › Island › Answer Codex on the island, on. A
+/// CXH, the owner's "do all of them" of 2026-09-28, item 22 (P470): Settings › Island › Answer Codex in Juice, on. A
 /// Codex shell command or patch is held for the island while its card shows, for at most `CodexHold.limit`: confirmed
 /// and sounded at once (Codex sends no notice), Yes and No (with a reason) answer that request's own helper with the exact
 /// output Codex's PermissionRequest hook takes (codex-rs `hooks/schema/generated/permission-request.command.output
@@ -24,7 +24,7 @@ struct CodexAllowOptInTests {
 
     // MARK: Rig
 
-    /// A rig with Answer Codex on the island on, and a Codex session begun through the helper, its rollout (a scratch
+    /// A rig with Answer Codex in Juice on, and a Codex session begun through the helper, its rollout (a scratch
     /// file, reviewer `reviewer`) watched by a real tracker.
     private func optedIn(reviewer: String = "user", app: Bool = false, backstop: TimeInterval = 600,
                          on: Bool = true) async throws -> (rig: AttentionRig, watch: (url: URL, tracker: CodexRolloutTracker)) {
@@ -79,9 +79,14 @@ struct CodexAllowOptInTests {
         await rig.settle()
     }
 
-    /// The call Codex runs once allowed, and its output: evidence that closes a released request.
+    /// The call Codex runs once allowed, and its output: evidence that closes a released request. The call is stamped
+    /// when its request opened, as Codex writes a call before it asks: the engine takes a call from 5 s after its request
+    /// at the latest (`matchCodexCalls`), and a stamp of "now" (`askedAt`: the rig's clock or the wall clock, the
+    /// earlier) fell past that once a loaded run's wall clock had passed the rig's, moved on 12 s to the hold's limit
+    /// (P1254).
     private func ran(_ rig: AttentionRig, _ watch: (url: URL, tracker: CodexRolloutTracker), _ callID: String, _ command: String) async {
-        let asked = E.askedAt(rig)
+        let opened = rig.engine.openRequests.filter { $0.tool == .codex && $0.callID == nil }.map(\.openedAt).max()
+        let asked = opened.map { Int($0.timeIntervalSince(RolloutLines.start).rounded(.down)) } ?? E.askedAt(rig)
         await append([RolloutLines.call("exec_command", callID, #"{"cmd":"\#(command)"}"#, at: asked),
                       RolloutLines.output(callID, "ok", at: asked + 1)], to: watch, rig)
     }
@@ -441,6 +446,19 @@ struct CodexAnswerSwitchTests {
         #expect(defaults.bool(forKey: AppSettings.Key.answerCodex))
         #expect(AppSettings(defaults: defaults, identity: .development).answerCodexOnIsland)
         #expect(IslandPaneText.answerCodex == "Codex's own prompt waits up to 12 s.")
+    }
+
+    /// Its name since the owner's 2026-10-05 (P1250): Juice, as it answers in the window too; the old key and default stay,
+    /// so a Mac where the owner turned it on keeps it on.
+    @Test
+    func itIsAnswerCodexInJuiceOnItsOldKey() throws {
+        #expect(IslandPaneText.answerCodexTitle == "Answer Codex in Juice")
+        #expect(AppSettings.Key.answerCodex == "ji.island.answerCodex")
+        let suite = "ji-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "ji.island.answerCodex")
+        #expect(AppSettings(defaults: defaults, identity: .development).answerCodexOnIsland)
     }
 
     @Test

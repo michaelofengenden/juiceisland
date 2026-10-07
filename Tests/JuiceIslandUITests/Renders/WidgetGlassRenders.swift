@@ -118,9 +118,13 @@ struct WidgetGlassRenders {
 
     // MARK: Checks
 
-    /// Under 1 % of `a`'s pixels apart from `b`'s. Two renders of one scene a moment apart differ where the glyphs take
-    /// their frames from the clock and where the agent marks' edges follow whichever render first drew the shared image,
-    /// the more so in a full run (P769): a few hundred pixels of a card. A look that leaked would change the whole glass.
+    /// The one moment the compared renders' glyphs draw (`GlyphClock`): from the wall clock, a full run's main actor put
+    /// two renders far enough apart that the glyphs' frames alone passed `alike`'s 1 % (P1256).
+    static let still = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    /// Under 1 % of `a`'s pixels apart from `b`'s. Two renders of one scene on one glyph clock (`still`) differ only where
+    /// the agent marks' edges follow whichever render first drew the shared image (P769): a few hundred pixels of a card.
+    /// A look that leaked would change the whole glass.
     static func alike(_ a: [UInt8], _ b: [UInt8]) -> Bool {
         guard a.count == b.count, !a.isEmpty else { return false }
         let differ = stride(from: 0, to: a.count, by: 4).filter { a[$0 ..< $0 + 4] != b[$0 ..< $0 + 4] }.count
@@ -131,17 +135,18 @@ struct WidgetGlassRenders {
     /// pixels they draw under a light one (`alike`; alone, the very same).
     @Test func widgetIsTheSameInEitherMode() throws {
         let panelEnv = AppEnvironment.demo()
+        let clock = GlyphClock(date: Self.still)
         for state in Self.islandStates() {
             let light = try AppearanceRenders.bitmap(Self.islandScene(state.ui, size: state.size, wallpaper: .gradient, variant: .after),
-                                                     size: state.size, env: state.env, scheme: .light)
+                                                     size: state.size, env: state.env, scheme: .light, clock: clock)
             let dark = try AppearanceRenders.bitmap(Self.islandScene(state.ui, size: state.size, wallpaper: .gradient, variant: .after, scheme: .dark),
-                                                    size: state.size, env: state.env, scheme: .dark)
+                                                    size: state.size, env: state.env, scheme: .dark, clock: clock)
             #expect(Self.alike(light, dark), "\(state.name)")
         }
         let light = try AppearanceRenders.bitmap(Self.panelScene(panelEnv, wallpaper: .gradient, variant: .after), size: Self.panelSize,
-                                                 env: panelEnv, scheme: .light)
+                                                 env: panelEnv, scheme: .light, clock: clock)
         let dark = try AppearanceRenders.bitmap(Self.panelScene(panelEnv, wallpaper: .gradient, variant: .after, scheme: .dark),
-                                                size: Self.panelSize, env: panelEnv, scheme: .dark)
+                                                size: Self.panelSize, env: panelEnv, scheme: .dark, clock: clock)
         #expect(Self.alike(light, dark), "panel")
     }
 
@@ -150,15 +155,17 @@ struct WidgetGlassRenders {
     /// Appearance (`alike`; alone, the very same pixels).
     @Test func lightAndDarkAndTheOtherThemesAreUnchanged() throws {
         let states = IslandGlassRenders.states().filter { ["closed", "card-approval"].contains($0.name) }
+        let clock = GlyphClock(date: Self.still)
         for state in states {
             for backdrop in GlassBackdrop.judged {
                 for scheme in [ColorScheme.light, .dark] {
                     func bitmap(_ theme: JuiceTheme, _ look: GlassLookChoice?) throws -> [UInt8] {
                         let scene = AppearanceRenders.islandScene(state.ui, size: state.size, backdrop: backdrop, theme: theme, scheme: scheme)
                         if let look {
-                            return try AppearanceRenders.bitmap(scene.environment(\.glassLook, look), size: state.size, env: state.env, scheme: scheme)
+                            return try AppearanceRenders.bitmap(scene.environment(\.glassLook, look), size: state.size, env: state.env,
+                                                                scheme: scheme, clock: clock)
                         }
-                        return try AppearanceRenders.bitmap(scene, size: state.size, env: state.env, scheme: scheme)
+                        return try AppearanceRenders.bitmap(scene, size: state.size, env: state.env, scheme: scheme, clock: clock)
                     }
                     #expect(try Self.alike(bitmap(.glass, nil), bitmap(.glass, .lightAndDark)), "glass \(state.name) \(backdrop) \(scheme)")
                     for theme in [JuiceTheme.black, .smoke, .solid] {

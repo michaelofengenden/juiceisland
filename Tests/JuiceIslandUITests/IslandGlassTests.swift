@@ -143,8 +143,14 @@ struct IslandGlassTests {
         rig.open()
         canvas.setTheme(.smoke)
         let glass = try #require(canvas.glassView)
-        let playing = try #require(glass.maskLayer.animation(forKey: IslandSurfaceLayers.key))
-        let clip = try #require(canvas.layers.clip.animation(forKey: IslandSurfaceLayers.key))
+        // What the canvas had: once, in a whole run at a load average near 100, the glass came with no animation, and
+        // never alone or in 200 runs beside a build (P1277).
+        let plan = canvas.layers.plan
+        let seen = "plan of \(plan?.surface.count ?? -1) samples, \(plan.map { $0.end - $0.start } ?? -1) s, begun "
+            + "\(plan.map { ProcessInfo.processInfo.systemUptime - $0.start } ?? -1) s ago; plays \(canvas.layers.plays), "
+            + "skipped \(canvas.layers.skipped); open \(rig.director.model.isOpen), in motion \(rig.director.model.inMotion)"
+        let playing = try #require(glass.maskLayer.animation(forKey: IslandSurfaceLayers.key), "\(seen)")
+        let clip = try #require(canvas.layers.clip.animation(forKey: IslandSurfaceLayers.key), "\(seen)")
         #expect(abs(playing.beginTime - clip.beginTime) < 0.001 && playing.duration == clip.duration)
         #expect(canvas.layers.fill.fillColor == nil)
         await FramePerf.wait(1.6)

@@ -155,7 +155,9 @@ struct AppearanceTests {
         let rig = await IslandGlassTests.rig(.coreAnimation, theme: theme)
         for look in [ColorScheme.light, .dark, .light] {
             rig.window.appearance = NSAppearance.named(look)
-            await FramePerf.wait(0.3)
+            // Until the content has said its look and the rim's view has taken it, a hop on the main actor after the
+            // content's (`observeGlassScheme`): a set 0.3 s looked between the two under a full run (P1258).
+            await FramePerf.settle(rig) { rig.ui.glassScheme == look && rig.canvas.glassView?.effectiveAppearance.colorScheme == look }
             #expect(rig.ui.glassScheme == look, "\(theme): \(String(describing: rig.ui.glassScheme)), want \(look)")
             let glass = try #require(rig.canvas.glassView)
             #expect(glass.effectiveAppearance.colorScheme == look)
@@ -233,7 +235,6 @@ struct AppearanceTests {
         #expect(!IslandPaneText.showsFrostRow(solid) && IslandPaneText.showsStateTintRow(solid))
         #expect(IslandPaneText.themeNote(solid) != nil && JuiceTheme.allCases.filter { IslandPaneText.themeNote($0) != nil } == [.solid])
         #expect(SolidLook.material == .windowBackground)
-        #expect(!IslandWidgetEntryView.lightInk(.solid, .fullColor) && IslandWidgetEntryView.lightInk(.glass, .fullColor))
         let view = GlassSurfaceNSView(style: .island, backdrop: .window, increaseContrast: false)
         let effect = view.effectView as? NSVisualEffectView
         #expect(effect?.material == .windowBackground && effect?.blendingMode == .behindWindow && effect?.state == .active)
@@ -554,15 +555,10 @@ struct AppearanceTests {
         let snapshot = WidgetSnapshot.make(.demo(settings: settings), at: Date(timeIntervalSince1970: 0))
         let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
         #expect(json["appearance"] as? String == "dark", "\(json.keys.sorted())")
-        // Solid in full colour draws in the pinned look; System is the widget's own; the system's looks and the other
-        // themes are as they were (Glass light, Black and Smoke the widget's own).
-        #expect(IslandWidgetEntryView.inkScheme(snapshot, .fullColor) == .dark && IslandWidgetEntryView.inkScheme(snapshot, .accented) == nil)
-        for (choice, want) in [(AppearanceChoice.system, nil), (.light, ColorScheme.light), (.dark, .dark)] as [(AppearanceChoice, ColorScheme?)] {
-            #expect(IslandWidgetEntryView.inkScheme(.closed(at: .now, theme: .solid, appearance: choice), .fullColor) == want)
-        }
+        // The widgets themselves follow the system's widgets since wave A5, whatever the theme (P1224); the file still
+        // carries the pin, under Solid only.
         for theme in [JuiceTheme.black, .glass, .smoke] {
-            let other = WidgetSnapshot.closed(at: .now, theme: theme, appearance: .dark)
-            #expect(other.appearance == nil && IslandWidgetEntryView.inkScheme(other, .fullColor) == (theme == .glass ? .light : nil))
+            #expect(WidgetSnapshot.closed(at: .now, theme: theme, appearance: .dark).appearance == nil)
         }
         // An older file has none: System. A new pin reloads the widget at once.
         var older = snapshot

@@ -118,88 +118,43 @@ struct WidgetRenders {
         try RenderHarness.render(scene(snapshot, .large, size: CGSize(width: 329, height: 345), margin: 11), "wg-narrow-large")
     }
 
-    // MARK: Theme (spec §4.8, P540 to P545, P566)
+    // MARK: The widgets' grounds (P1224, P1401)
 
-    /// The glass themes, as the files name them: Smoke's are Glass's before 2026-09-29, byte for byte.
-    nonisolated static let glassThemes: [JuiceTheme] = [.glass, .smoke]
-
-    /// The widget in `theme` on a judged backdrop, its container background the widget's own (`WidgetBackground`) in
-    /// WidgetKit's rounded shape, its content in the scheme the entry view gives it (`WidgetInkScheme`: Glass's light
-    /// ink). Offscreen there is no glass and no system platter: Smoke's stand-in blurs the backdrop under the floor, and
-    /// Glass shows it sharp under its veil, where live the system's platter or the desktop shows through (P541). Names
-    /// `wg-standin-…`.
-    private func themed(_ snapshot: WidgetSnapshot?, _ face: WidgetFace, _ theme: JuiceTheme, on backdrop: GlassBackdrop,
-                        reduceTransparency: Bool = false, contrast: ColorSchemeContrast = .standard) -> some View {
-        let size = Size.of(face), margin = Self.margin
+    /// The sessions widget as the desktop shows it, whatever the island's theme: full colour with the island's Glass look
+    /// Widget ink, lifted (`SessionsWidgetInk`), on Glass (the system's material, `full`) and on Black (`black`); dimmed on
+    /// the system's glass in one colour. Over the widgets' three wallpapers.
+    /// Names `wg-clear-<wallpaper>-<face>-<full|black|dimmed>`.
+    @Test(arguments: GlassBackdrop.widgetWallpapers)
+    func clearLook(_ wallpaper: GlassBackdrop) throws {
         let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-        return GlassStage(backdrop: backdrop) {
-            IslandWidgetView(snapshot: snapshot, face: face, size: CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin),
-                             date: Self.now)
-                .padding(margin)
-                .frame(width: size.width, height: size.height)
-                .background {
-                    if reduceTransparency || contrast != .standard, theme == .smoke {
-                        WidgetSmokeBody(rendering: .standIn, reduceTransparency: reduceTransparency, contrast: contrast)
-                    } else if reduceTransparency || contrast != .standard, theme == .glass {
-                        WidgetGlassBody(rendering: .standIn, reduceTransparency: reduceTransparency, contrast: contrast)
-                    } else {
-                        WidgetBackground()
-                    }
-                }
-                .clipShape(shape)
-                .containerShape(shape)
-                .modifier(WidgetInkScheme(scheme: IslandWidgetEntryView.lightInk(theme, .fullColor) ? .light : nil))
-                .padding(24)
-        }
-        .frame(width: size.width + 48, height: size.height + 48)
-        .environment(\.juiceTheme, theme)
-    }
-
-    /// Glass and Smoke, each face on a white window's worth of wallpaper, a black desktop and a busy photo.
-    @Test(arguments: GlassBackdrop.judged, glassThemes)
-    func glass(_ backdrop: GlassBackdrop, _ theme: JuiceTheme) throws {
         for face in WidgetFace.allCases {
-            try RenderHarness.render(themed(.preview(at: Self.now), face, theme, on: backdrop),
-                                     "wg-standin-\(theme.rawValue)-\(backdrop.rawValue)-\(face.rawValue)")
-        }
-    }
-
-    /// Black, Glass and Smoke side by side on each judged backdrop, one sheet a face.
-    @Test func themeSheets() throws {
-        for face in WidgetFace.allCases {
-            let sheet = VStack(alignment: .leading, spacing: 8) {
-                ForEach(GlassBackdrop.judged, id: \.self) { backdrop in
-                    HStack(spacing: 8) {
-                        ForEach(JuiceTheme.allCases, id: \.self) { theme in
-                            themed(.preview(at: Self.now), face, theme, on: backdrop)
+            for ground in ["full", "black", "dimmed"] {
+                let dimmed = ground == "dimmed"
+                let size = Size.of(face), margin = Self.margin
+                let scene = GlassStage(backdrop: wallpaper) {
+                    IslandWidgetView(snapshot: .preview(at: Self.now), face: face,
+                                     size: CGSize(width: size.width - 2 * margin, height: size.height - 2 * margin), date: Self.now,
+                                     tinted: dimmed)
+                        .modifier(SessionsWidgetInk(fullColour: !dimmed))
+                        .padding(margin)
+                        .frame(width: size.width, height: size.height)
+                        .background {
+                            if dimmed {
+                                GlassFaceStandIn(shape: shape, style: GlassStyle.panel.clear, face: WidgetGlassRenders.widgetModel, scheme: .dark,
+                                                 reduceTransparency: false, contrast: .standard)
+                            } else if ground == "black" {
+                                WidgetBackdrop(choice: .black)
+                            } else {
+                                WidgetBackdrop(choice: .glass)
+                            }
                         }
-                    }
+                        .clipShape(shape)
+                        .containerShape(shape)
+                        .padding(24)
                 }
+                .frame(width: size.width + 48, height: size.height + 48)
+                try RenderHarness.render(scene, "wg-clear-\(wallpaper.rawValue)-\(face.rawValue)-\(ground)")
             }
-            .padding(8)
-            .background(Color(white: 0.2))
-            try RenderHarness.render(sheet, "wg-standin-sheet-\(face.rawValue)")
         }
-    }
-
-    /// Glass and Smoke with every state and both agents' colours, by agent in Liquid, not running, and nothing running, on
-    /// the busy photo; Reduce Transparency and Increase Contrast.
-    @Test(arguments: glassThemes)
-    func glassStates(_ theme: JuiceTheme) throws {
-        let name = "wg-standin-\(theme.rawValue)"
-        try RenderHarness.render(themed(demo(.allStates), .large, theme, on: .busy), "\(name)-all-states-busy-large")
-        let settings = AppSettings.ephemeral()
-        settings.glyphStyle = .liquid
-        settings.glyphColour = .byAgent
-        try RenderHarness.render(themed(demo(.allStates, settings: settings), .medium, theme, on: .busy),
-                                 "\(name)-all-states-liquid-agent-busy-medium")
-        try RenderHarness.render(themed(.closed(at: Self.now, theme: theme), .small, theme, on: .busy), "\(name)-closed-busy-small")
-        var idle = WidgetSnapshot.preview(at: Self.now)
-        idle.rows = []
-        try RenderHarness.render(themed(idle, .medium, theme, on: .white), "\(name)-no-sessions-white-medium")
-        try RenderHarness.render(themed(.preview(at: Self.now), .medium, theme, on: .busy, reduceTransparency: true),
-                                 "\(name)-busy-medium-reduce-transparency")
-        try RenderHarness.render(themed(.preview(at: Self.now), .medium, theme, on: .busy, contrast: .increased),
-                                 "\(name)-busy-medium-increase-contrast")
     }
 }

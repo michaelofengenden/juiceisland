@@ -78,7 +78,7 @@ struct UsageKeyAndSwitcherTests {
 
     @Test
     func switchSessionsIsAThirdActionWithOneLine() {
-        #expect(GlobalKeyAction.allCases.map(\.title) == ["Jump to what needs you", "Open Juice Island", "Switch sessions"])
+        #expect(GlobalKeyAction.allCases.map(\.title) == ["Jump to what needs you", "Open Juice Island", "Switch sessions", "Send to island"])
         #expect(GlobalKeyAction.jump.detail == nil && GlobalKeyAction.open.detail == nil)
         #expect(GlobalKeyAction.switcher.detail != nil)
         // It jumps nowhere by itself: no row shows the key's hint.

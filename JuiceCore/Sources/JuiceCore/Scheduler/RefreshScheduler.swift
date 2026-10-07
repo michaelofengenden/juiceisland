@@ -335,6 +335,23 @@ public final class RefreshScheduler {
         }
     }
 
+    /// A lapsed Codex login's file changed (P1552): the owner ran Codex there and it refreshed the login. Its reads failed
+    /// only because the login had lapsed, so the pause and the backoff they set say nothing about the vendor's limits: one
+    /// read is made as soon as its floor allows (its boosted interval since it was last tried: Codex 60, 30 or 15 s by use),
+    /// the pause lifted, never later than the read already due. A read under way, an account not monitored, and a No plan
+    /// one are left as they are. Returns whether the read was moved.
+    @discardableResult
+    public func readAfterLoginRefresh(id: String) -> Bool {
+        guard let account = accounts.first(where: { $0.id == id }), account.monitored, inFlight[id] == nil, !isNoPlan(id) else {
+            return false
+        }
+        let current = now()
+        let floorEnd = (lastAttempt[id] ?? current).addingTimeInterval(floor(for: account))
+        pausedUntil[id] = nil
+        due[id] = max(current, min(due[id] ?? .distantFuture, floorEnd))
+        return true
+    }
+
     /// Now, or the end of a rate-limit pause if one is still running.
     private func earliestRead(for id: String) -> Date { max(now(), pausedUntil[id] ?? .distantPast) }
 

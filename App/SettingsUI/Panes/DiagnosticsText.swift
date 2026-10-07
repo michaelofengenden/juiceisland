@@ -121,6 +121,9 @@ enum DiagnosticsText {
             return AccountLine(lastRead: lastRead, next: "paused", status: "Signing in", tone: .normal)
         case .signInNeeded:
             return AccountLine(lastRead: lastRead, next: "paused", status: "Sign-in required", tone: .red)
+        case .loginLapsed:
+            // Never "Rate limited", whatever its reads said (P1550); it is read again once its login file changes.
+            return AccountLine(lastRead: lastRead, next: next(fallback: nil), status: Rules.loginLapsedShort, tone: .amber)
         default: break
         }
         if case let .rateLimited(retryAfter)? = record?.lastError {
@@ -292,13 +295,20 @@ enum DiagnosticsText {
 
     static func report(lines: [(alias: String, provider: Provider, line: AccountLine)], money: [(name: String, status: String)],
                        bridge: String? = nil, attention: String? = nil, attentionDetails: String? = nil,
-                       stamp: BuildStamp = BuildStamp(commit: nil, repoPath: nil)) -> String {
+                       folds: [String] = [], stamp: BuildStamp = BuildStamp(commit: nil, repoPath: nil)) -> String {
         var text = [buildLine(stamp)] + (bridge.map { ["Bridge: " + $0] } ?? [])
         text += attention.map { ["Needs you: " + $0.replacingOccurrences(of: "\n", with: " · ")] } ?? []
         text += attentionDetails.map { ["Needs you, in detail: " + $0] } ?? []
         text += ["Floors: " + floorsLine.replacingOccurrences(of: "\n", with: " · "), "", "Accounts"]
         text += lines.map { "  \($0.provider.displayName) \($0.alias): \($0.line.status) (read \($0.line.lastRead), next \($0.line.next))" }
         text += ["", "Money"] + money.map { "  \($0.name): \($0.status)" }
+        if !folds.isEmpty { text += ["", "Island folds"] + folds.map { "  " + $0 } }
         return text.joined(separator: "\n")
+    }
+
+    /// The fold's last decisions (P1430), oldest first: the time, the session's id cut to 8 characters, and what was
+    /// decided. Ids and states only: no reply's or answer's text is ever in them.
+    static func folds(_ notes: [FoldNote]) -> [String] {
+        notes.map { "\(hhmm($0.at)) \($0.sessionID.prefix(8)) \($0.said)" }
     }
 }

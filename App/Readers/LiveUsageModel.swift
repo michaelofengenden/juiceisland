@@ -149,6 +149,9 @@ final class LiveUsageModel: UsageModel {
     @ObservationIgnored private var historyLoaded = false
     /// When each login's activity boost was last renewed (`sessionsAtWork`).
     @ObservationIgnored private var boostRenewed: [String: Date] = [:]
+    /// Lapsed Codex logins (P1552), by login id: their login file's date when last seen lapsed. A date that moves past it
+    /// is the owner's Codex refreshing the login (`watchLapsedLogins`).
+    @ObservationIgnored private var lapsedFiles: [String: Date] = [:]
     /// Between `willSleep` and `didWake`: a scheduler made in between starts paused too.
     @ObservationIgnored private var isAsleep = false
     /// When `willSleep` came, and the clock's ticks since: the clock does not tick while the Mac sleeps, so ticks that
@@ -296,8 +299,8 @@ final class LiveUsageModel: UsageModel {
     }
 
     /// The clock (every 5 s in the app): ages move on, the mirror follows Juice's files while it runs, the guard is
-    /// checked again in case a launch or quit notification was missed, and every enabled folder is looked at. A wake
-    /// that never came is taken as come (`missedWakeAfter`).
+    /// checked again in case a launch or quit notification was missed, every enabled folder is looked at, and so is each
+    /// lapsed Codex login's file (`watchLapsedLogins`). A wake that never came is taken as come (`missedWakeAfter`).
     func tick() {
         guard isActive else { return }
         if isAsleep, let since = asleepSince {
@@ -310,7 +313,10 @@ final class LiveUsageModel: UsageModel {
         }
         evaluateGuard()
         if phase == .waitingForJuice { reloadStore() }
-        if phase == .reading { checkFolders() }
+        if phase == .reading {
+            checkFolders()
+            if !isAsleep { watchLapsedLogins() }
+        }
         rebuild()
     }
 
@@ -380,6 +386,7 @@ final class LiveUsageModel: UsageModel {
             guard let self, self.generation == current, self.phase == .reading else { return }
             self.wiring = nil
             self.wire(found)
+            self.readLoginsRefreshedWhileAway()
             self.scheduler.start()
             // Folders not placed yet are asked at once, not on the clock's first tick.
             self.checkFolders()
@@ -791,14 +798,16 @@ final class LiveUsageModel: UsageModel {
 
     private func rebuild() {
         let tick = clock()
+        let files = loginFileDates()
         let lists = LoginList.build(accounts: accountsStore.accounts, logins: loginsStore.logins, folders: loginsStore.folders,
-                                    signingIn: [], now: tick, home: readers.home)
+                                    signingIn: [], now: tick, home: readers.home, loginFiles: files)
+        if phase == .reading { noteLapsedLogins(lists, files: files) }
         let loginRecords = loginRecords
         // Only this app's reads: nothing is saved while standalone Juice runs.
         if phase == .reading { historyStore.observe(loginRecords, providers: loginsStore.logins.mapValues(\.provider)) }
         let built = PanelModelBuilder.build(entries: LoginList.panelEntries(lists), records: loginRecords, signingIn: [],
                                             attention: LoginList.needsSignIn(lists), money: MoneyRowModel.notConnected, now: tick,
-                                            history: historyStore.history)
+                                            history: historyStore.history, loginFiles: files)
         let all = loginRecords.merging(readingsStore.records) { login, _ in login }
         if all != records { records = all }
         if built != panel || lists != logins || tick.timeIntervalSince(now) >= 60 {
@@ -905,6 +914,81 @@ final class LiveUsageModel: UsageModel {
             boostRenewed[login] = now
             scheduler.boost(id: login, until: now.addingTimeInterval(scheduler.policy.boostDuration))
         }
+    }
+
+    // MARK: A lapsed Codex login (P1550 to P1553)
+
+    /// When each Codex login's file last changed, by login id: the newest of its enabled folders' (`CodexBackend.stat`,
+    /// the identity watch's `stat`; the file is never opened). Empty while no Codex CLI is wired. A login lapses by it
+    /// (`Rules.loginLapsed`), and one over 8 days old says so in its hover (`Rules.loginAging`). Nothing is written to a
+    /// folder.
+    private func loginFileDates() -> [String: Date] {
+        guard let codex else { return [:] }
+        var dates: [String: Date] = [:]
+        for login in loginsStore.logins.values where login.provider == .codex {
+            let folders = loginsStore.folders(of: login.id, in: accountsStore.accounts)
+            if let newest = folders.compactMap({ codex.stat($0.folder)?.modified }).max() { dates[login.id] = newest }
+        }
+        return dates
+    }
+
+    /// Each lapsed login of `lists`, with its login file's date (`rebuild`, so a login is watched from the moment its
+    /// battery says so).
+    private func noteLapsedLogins(_ lists: [ProviderLogins], files: [String: Date]) {
+        for row in lists.flatMap(\.logins) where row.battery.state == .loginLapsed && row.monitored {
+            guard let date = files[row.id] else { continue }
+            lapsedFiles[row.id] = max(lapsedFiles[row.id] ?? .distantPast, date)
+        }
+    }
+
+    /// On the clock: a lapsed Codex login's file is looked at (a `stat`). Once its date moves past the one it lapsed with,
+    /// the owner's Codex refreshed the login there, and the login gets one read as soon as its floor allows
+    /// (`RefreshScheduler.readAfterLoginRefresh`) instead of after the pause its failed reads set; the battery comes back
+    /// with that read. A login read well since, switched off or gone is no longer watched.
+    private func watchLapsedLogins() {
+        guard !lapsedFiles.isEmpty else { return }
+        let dates = loginFileDates()
+        for (id, seen) in lapsedFiles {
+            guard let login = loginsStore.logins[id], login.monitored, (login.record?.consecutiveFailures ?? 0) > 0 else {
+                lapsedFiles[id] = nil
+                continue
+            }
+            // A read under way is left to end; the next tick moves the one after it.
+            guard let date = dates[id], date > seen, scheduler.readAfterLoginRefresh(id: id) else { continue }
+            lapsedFiles[id] = nil
+            JuiceLog.reads.notice("a lapsed Codex login's file changed: it is read again at its floor")
+        }
+    }
+
+    /// Once a run, as its readers are wired (P1552): a Codex login whose reads kept failing while its login file changed
+    /// after the last of them (`Rules.loginRefreshedSinceFailures`) was refreshed by the owner's Codex while the app was
+    /// not running, which `watchLapsedLogins` cannot see (its dates are this run's). It gets one read at its floor instead
+    /// of after the pause its failures restored.
+    private func readLoginsRefreshedWhileAway() {
+        let files = loginFileDates()
+        for login in loginsStore.logins.values where login.monitored
+            && Rules.loginRefreshedSinceFailures(provider: login.provider, record: login.record, loginFileChanged: files[login.id]) {
+            guard scheduler.readAfterLoginRefresh(id: login.id) else { continue }
+            JuiceLog.reads.notice("a Codex login's file changed after its failed reads while the app was not running: it is read at its floor")
+        }
+    }
+
+    /// What Refresh login opens for a lapsed Codex login (P1551): `CODEX_HOME='<folder>' codex` in a new window of the
+    /// owner's usual terminal, for the folder its next read goes through (`preferredFolder`: the one whose login file
+    /// changed last); plain `codex` for `~/.codex`. Nil for any other battery.
+    func loginRefreshLaunch(_ id: String) -> FreshSessionLaunch? {
+        guard phase == .reading, logins.flatMap(\.logins).first(where: { $0.id == id })?.battery.state == .loginLapsed,
+              let folder = preferredFolder(for: id), folder.provider == .codex else { return nil }
+        return FreshSessionLaunch.loginRefresh(profileFolder: folder.folder, host: readers.usualHost(), home: readers.home)
+    }
+
+    /// Refresh login, on the owner's click only (P1551): opens `loginRefreshLaunch`. Codex refreshes the login as it
+    /// starts, and the watch then reads the login again (`watchLapsedLogins`). Nothing is typed after the command.
+    func refreshLogin(_ id: String) {
+        guard let launch = loginRefreshLaunch(id) else { return }
+        let open = readers.openTerminal
+        JuiceLog.reads.notice("Refresh login: a terminal window opens for a lapsed Codex login")
+        Task { _ = await open(launch) }
     }
 
     // MARK: Editing (Settings › Accounts)

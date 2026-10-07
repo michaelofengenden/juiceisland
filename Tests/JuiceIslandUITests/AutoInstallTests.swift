@@ -13,13 +13,13 @@ import Testing
 struct AutoInstallTests {
     static let build = String(repeating: "a", count: 40)
     static let tip = String(repeating: "c", count: 40)
+    /// How many seconds' worth of looks a wait may take (`Looks`): counted looks, not the clock, as a full run has held
+    /// the main actor for minutes (P1253).
     nonisolated static let patience: TimeInterval = 60
-    /// The stub updater's own end, far past any run of the suite: it waits for the test, not the clock.
-    nonisolated static let backstop: TimeInterval = 1_800
 
     /// A scratch bundle whose updater answers an install as update-app.sh does: `ready`, then it waits for `<script>.go`
-    /// or for the sandbox to be removed, however long a loaded run takes to get there (W3R-9). `backstop` only keeps a
-    /// test process that died before either from leaving it behind.
+    /// or for the sandbox to be removed, however long a loaded run takes to get there (W3R-9); a test process that died
+    /// before either ends it too, so it is never left behind.
     private struct Sandbox {
         let root: URL
         let paths: UpdateController.Paths
@@ -43,8 +43,8 @@ struct AutoInstallTests {
             self="$0"
             print -r -- "mode:${JI_RUN_MODE:-update}" >> "$self.calls"
             print -r -- "app:$2" >> "$JI_STATUS_FILE"; print -r -- verifying >> "$JI_STATUS_FILE"; print -r -- ready >> "$JI_STATUS_FILE"
-            end=$(( SECONDS + \(Int(AutoInstallTests.backstop)) ))
-            until [[ -e "$self.go" ]] || (( SECONDS > end )); do [[ -e "$self" ]] || exit 0; sleep 0.02; done
+            runner=$PPID
+            until [[ -e "$self.go" ]]; do [[ -e "$self" ]] && kill -0 $runner 2>/dev/null || exit 0; sleep 0.02; done
             exit 0
             """
             try body.write(to: script, atomically: true, encoding: .utf8)
@@ -94,9 +94,7 @@ struct AutoInstallTests {
     }
 
     private func wait(until done: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(Self.patience)
-        while Date() < deadline, !done() { try? await Task.sleep(for: .milliseconds(10)) }
-        return done()
+        await Looks.until(Self.patience, done)
     }
 
     @Test func aQuietMomentIsNoCardWaitingAndNoKeyForAMinute() {

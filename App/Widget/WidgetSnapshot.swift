@@ -45,6 +45,56 @@ struct WidgetSnapshot: Codable, Equatable, Sendable {
     /// look, which WidgetKit hands it from macOS (`appearanceChoice`).
     var appearance: String?
 
+    /// The money rows the desktop panel shows (Settings › Money › Show), in its order: what the Usage widget draws under
+    /// the batteries (P1221). nil in a file an older build wrote, read as none.
+    var money: [Money]?
+
+    /// Settings › Desktop Panel › Widget background (P1401): `glass` or `black`, what both widgets stand on in full
+    /// colour. nil in a file an older build wrote, read as Glass (`backgroundChoice`).
+    var widgetBackground: String?
+
+    /// One money row as the panel draws it: the source's name (or the owner's label for it), its amount with its suffix,
+    /// or the word that says why there is none (P1213). No key, account, email or path.
+    struct Money: Codable, Equatable, Sendable {
+        enum Emphasis: String, Codable, Sendable { case normal, warn, attention }
+
+        var id: String
+        var name: String
+        var amount: String?
+        var suffix: String?
+        var isSpent: Bool
+        var word: String?
+        var emphasis: Emphasis
+
+        init(id: String, name: String, amount: String?, suffix: String? = nil, isSpent: Bool = false, word: String? = nil,
+             emphasis: Emphasis = .normal) {
+            self.id = id
+            self.name = name
+            self.amount = amount
+            self.suffix = suffix
+            self.isSpent = isSpent
+            self.word = word
+            self.emphasis = emphasis
+        }
+
+        init(_ row: MoneyRowModel) {
+            let emphasis: Emphasis = switch row.emphasis {
+            case .normal: .normal
+            case .warn: .warn
+            case .attention: .attention
+            }
+            self.init(id: row.id, name: row.name, amount: row.amount, suffix: row.suffix, isSpent: row.isSpent, word: row.word,
+                      emphasis: emphasis)
+        }
+
+        /// Its kind, without its amount: a row that gains or loses its amount, or changes colour, reloads the Usage widget
+        /// at once; a new amount waits for the floor (`WidgetKind.usage`).
+        var category: String { (amount == nil ? "word:" + (word ?? "") : "amount") + ":" + emphasis.rawValue }
+    }
+
+    /// The money rows, none for a file an older build wrote.
+    var moneyRows: [Money] { money ?? [] }
+
     /// The running look the widget's Liquid glyphs draw.
     var runningLook: LiquidRunningLook { liquidRunning.flatMap(LiquidRunningLook.init(rawValue:)) ?? .slim }
 
@@ -56,6 +106,9 @@ struct WidgetSnapshot: Codable, Equatable, Sendable {
 
     /// The Appearance Solid's widget takes: System for a file with none, or with one this build does not know.
     var appearanceChoice: AppearanceChoice { appearance.flatMap(AppearanceChoice.init(rawValue:)) ?? .system }
+
+    /// What the widgets stand on: Glass for a file with none, or with one this build does not know.
+    var backgroundChoice: WidgetBackgroundChoice { WidgetBackgroundChoice(stored: widgetBackground) }
 
     /// Settings › General › Appearance as the snapshot keeps it: under Solid only, the one theme whose widget follows it.
     static func appearance(_ choice: AppearanceChoice, theme: JuiceTheme) -> String? { theme == .solid ? choice.rawValue : nil }
@@ -93,6 +146,8 @@ struct WidgetSnapshot: Codable, Equatable, Sendable {
             case noPlan
             /// A Claude login billed by usage, with no plan limits (P581): dimmed like No plan.
             case noLimits
+            /// A lapsed Codex login (P1550): sign-in's dashed outline with a turning arrow.
+            case loginLapsed
         }
 
         var state: State
@@ -102,11 +157,12 @@ struct WidgetSnapshot: Codable, Equatable, Sendable {
         var inUse: Bool? = nil
     }
 
-    /// The app quit (or never wrote one): nothing to show but that, in the theme it was in.
-    static func closed(at date: Date, theme: JuiceTheme = .black, appearance: AppearanceChoice = .system) -> WidgetSnapshot {
+    /// The app quit (or never wrote one): nothing to show but that, in the theme it was in, on the background it chose.
+    static func closed(at date: Date, theme: JuiceTheme = .black, appearance: AppearanceChoice = .system,
+                       background: WidgetBackgroundChoice = .glass) -> WidgetSnapshot {
         WidgetSnapshot(written: date, appRunning: false, rows: [], more: 0, claude: [], codex: [],
                        glyphStyle: GlyphStyle.pixel.rawValue, glyphColour: GlyphColourMode.byState.rawValue, theme: theme.rawValue,
-                       appearance: Self.appearance(appearance, theme: theme))
+                       appearance: Self.appearance(appearance, theme: theme), widgetBackground: background.rawValue)
     }
 }
 
@@ -131,7 +187,9 @@ extension WidgetSnapshot {
                               glyphStyle: env.settings.glyphStyle.rawValue, glyphColour: env.settings.glyphColour.rawValue,
                               liquidRunning: env.settings.liquidRunning.rawValue, needsYouColour: env.settings.needsYouColour.rawValue,
                               theme: env.settings.juiceTheme.rawValue,
-                              appearance: Self.appearance(env.settings.appearance, theme: env.settings.juiceTheme))
+                              appearance: Self.appearance(env.settings.appearance, theme: env.settings.juiceTheme),
+                              money: env.usage.shownMoney(env.settings).map(Money.init),
+                              widgetBackground: env.settings.widgetBackground.rawValue)
     }
 
     /// One row: its agent, name and glyph, and for one that needs you the status line its card's header carries, less
@@ -188,12 +246,14 @@ extension WidgetSnapshot {
 
     /// What the widget ever needs to reload for at once (P340): a request that comes or goes or changes its line, the
     /// app quitting, a battery that changes its kind (available, low, used up, signed out, stale), the theme, Solid's
-    /// Appearance or the needs-you colour (the owner just picked it in Settings and looks for it, P525, P777, P783). A title, a session that starts or
-    /// ends a turn, or a battery's percent waits for the next reload (`WidgetReloadPolicy`).
+    /// Appearance, the needs-you colour or the widget background (the owner just picked it in Settings and looks for it,
+    /// P525, P777, P783, P1401). A title, a session that starts or ends a turn, or a battery's percent waits for the next
+    /// reload (`WidgetReloadPolicy`).
     var urgentKey: UrgentKey {
         UrgentKey(appRunning: appRunning,
                   needsYou: rows.filter { $0.kind == .needsYou }.map { [$0.id, $0.word ?? "", $0.detail ?? ""] },
-                  batteries: (claude + codex).map(\.category), theme: juiceTheme, appearance: appearanceChoice, needsYouColour: needsYou)
+                  batteries: (claude + codex).map(\.category), theme: juiceTheme, appearance: appearanceChoice, needsYouColour: needsYou,
+                  background: backgroundChoice)
     }
 
     struct UrgentKey: Equatable, Sendable {
@@ -203,6 +263,39 @@ extension WidgetSnapshot {
         var theme: JuiceTheme = .black
         var appearance: AppearanceChoice = .system
         var needsYouColour: NeedsYouColour = .pink
+        var background: WidgetBackgroundChoice = .glass
+    }
+
+    /// What the Usage widget ever needs to reload for at once (P1222): the app quitting, a battery that changes its kind
+    /// (available, low, used up, signed out, stale), the account in use or the next one moving, a money row that gains
+    /// or loses its amount or its colour, and the widget background (P1401). A percent or an amount waits for its floor
+    /// (`WidgetKind.usage`).
+    var usageKey: [String] {
+        ["running:\(appRunning)", "background:\(backgroundChoice.rawValue)"]
+            + (claude + codex).map { "\($0.category):\($0.isNext):\($0.showsInUse)" }
+            + moneyRows.map(\.category)
+    }
+
+    /// What the Usage widget draws: the batteries and the money, whether the app runs, and what it stands on; nothing of
+    /// the sessions.
+    struct UsageContent: Equatable, Sendable {
+        var appRunning: Bool
+        var claude: [Battery]
+        var codex: [Battery]
+        var money: [Money]
+        var background: WidgetBackgroundChoice = .glass
+    }
+
+    var usageContent: UsageContent {
+        UsageContent(appRunning: appRunning, claude: claude, codex: codex, money: moneyRows, background: backgroundChoice)
+    }
+
+    /// What the sessions widget draws: everything but the money.
+    var sessionsContent: WidgetSnapshot {
+        var content = self
+        content.money = nil
+        content.written = .distantPast
+        return content
     }
 
     /// Every battery's refill time still ahead of `date`: the widget's timeline adds an entry at each, so a used-up
@@ -212,6 +305,65 @@ extension WidgetSnapshot {
             guard case let .usedUp(refill?) = battery.state, refill > date else { return nil }
             return refill
         }).sorted()
+    }
+}
+
+/// The app's two widgets (spec §4.7), in the gallery's order: the Usage widget, the desktop panel's batteries and money,
+/// and the sessions widget, what needs you and what runs.
+enum WidgetKind: String, CaseIterable, Sendable {
+    /// The kind the app's only widget had until wave A5, so a widget the owner already placed becomes the Usage widget,
+    /// which takes the panel's place (P1220).
+    case usage = "JuiceIslandWidget"
+    case sessions = "JuiceIslandSessionsWidget"
+
+    /// At most one reload in this long for what is not urgent (P340, P1222). The sessions' rows change every few seconds
+    /// while agents work; the batteries' percents every minute or two while an account is in use, so the Usage widget
+    /// waits a quarter of an hour, as Apple's "every 15 to 60 minutes" budget for a widget seen often allows.
+    var floor: TimeInterval {
+        switch self {
+        case .usage: 900
+        case .sessions: 300
+        }
+    }
+
+    /// The most routine reloads (neither urgent nor the app's freshness one) in any day, or nil for no cap (P1282). The
+    /// Usage widget's percents could ask one every quarter of an hour all day, which with the urgent ones would spend
+    /// WidgetKit's budget and leave none for the freshness reload; past the cap a percent waits for that reload. Sixteen
+    /// and the freshness reloads come to about 40 a day, leaving room for the urgent ones.
+    var routinePerDay: Int? {
+        switch self {
+        case .usage: 16
+        case .sessions: nil
+        }
+    }
+
+    /// A reload this long after the last of its kind is not a routine one: the app's freshness reload (P1282).
+    var freshAfter: TimeInterval {
+        switch self {
+        case .usage: UsageFreshness.appReloadAfter
+        case .sessions: .infinity
+        }
+    }
+
+    /// What, in `snapshot`, makes this kind reload at once.
+    func urgentKey(_ snapshot: WidgetSnapshot) -> [String] {
+        switch self {
+        case .usage: return snapshot.usageKey
+        case .sessions:
+            let key = snapshot.urgentKey
+            return ["running:\(key.appRunning)", key.theme.rawValue, key.appearance.rawValue, key.needsYouColour.rawValue,
+                    "background:\(key.background.rawValue)"]
+                + key.needsYou.map { $0.joined(separator: "\u{1F}") } + key.batteries
+        }
+    }
+
+    /// Whether this kind draws `a` and `b` the same, whenever each was written.
+    func drawsSame(_ a: WidgetSnapshot, _ b: WidgetSnapshot?) -> Bool {
+        guard let b else { return false }
+        switch self {
+        case .usage: return a.usageContent == b.usageContent
+        case .sessions: return a.sessionsContent == b.sessionsContent
+        }
     }
 }
 
@@ -228,6 +380,7 @@ extension WidgetSnapshot.Battery {
         case .unknown: .unknown
         case .noPlan: .noPlan
         case .noLimits: .noLimits
+        case .loginLapsed: .loginLapsed
         }
         self.init(state: state, isNext: model.isNext, inUse: inUse ? true : nil)
     }
@@ -246,6 +399,7 @@ extension WidgetSnapshot.Battery {
         case .unknown: .unknown
         case .noPlan: .noPlan
         case .noLimits: .noLimits
+        case .loginLapsed: .loginLapsed
         }
         return BatteryModel(id: "\(provider.rawValue)-\(index)", alias: "", state: account, isNext: isNext,
                             hoverLabel: accessibilityText)
@@ -262,6 +416,7 @@ extension WidgetSnapshot.Battery {
         case .unknown: "unknown"
         case .noPlan: "noPlan"
         case .noLimits: "noLimits"
+        case .loginLapsed: "loginLapsed"
         }
     }
 
@@ -275,6 +430,7 @@ extension WidgetSnapshot.Battery {
         case .unknown: "Unknown"
         case .noPlan: "No plan"
         case .noLimits: "No limits"
+        case .loginLapsed: Rules.loginLapsedShort
         }
     }
 }

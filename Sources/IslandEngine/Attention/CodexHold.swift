@@ -1,7 +1,7 @@
 import Foundation
 import OpenIslandCore
 
-/// Settings › Island › Answer Codex on the island (P470; the owner's "do all of them" of 2026-09-28, item 22). Codex
+/// Settings › Island › Answer Codex in Juice (P470; the owner's "do all of them" of 2026-09-28, item 22). Codex
 /// awaits its PermissionRequest hook before its own reviewer and before its own prompt (openai/codex
 /// `core/src/tools/approvals.rs`: "1. Hooks 2. If StrictAutoReview || Guardian enabled, then Guardian. Else, user."), and
 /// honours the hook's `allow` or `deny` for that one call (`hooks/src/events/permission_request.rs`). So, as for a Claude
@@ -92,7 +92,7 @@ public enum CodexHold {
 }
 
 extension SessionEngine {
-    /// Settings › Island › Answer Codex on the island (P470), in either mode (P1050). Off: every Codex request is handed
+    /// Settings › Island › Answer Codex in Juice (P470), in either mode (P1050). Off: every Codex request is handed
     /// back at once and shown read-only (decision 15). Turned off, every Codex hold ends at once.
     public var answersCodex: Bool {
         get { codexHoldSwitch.isOn }

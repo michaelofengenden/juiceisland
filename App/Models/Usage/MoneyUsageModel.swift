@@ -353,6 +353,7 @@ final class MoneyUsageModel: UsageModel {
     var quotaNotice: QuotaNotice? { base.quotaNotice }
     func refreshAccount(_ id: String) { base.refreshAccount(id) }
     func manualRead(_ id: String) -> RefreshScheduler.ManualRead { base.manualRead(id) }
+    func refreshLogin(_ id: String) { base.refreshLogin(id) }
     func schedule(of loginID: String) -> ReadSchedule? { base.schedule(of: loginID) }
     func question(forFolder id: String) -> FolderQuestion { base.question(forFolder: id) }
 

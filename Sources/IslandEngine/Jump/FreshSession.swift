@@ -154,6 +154,17 @@ extension FreshSessionLaunch {
         return FreshSessionLaunch(host: host, folder: start, line: command)
     }
 
+    /// Refresh login, on a lapsed Codex login's battery or Accounts row (P1551): a new window of the owner's usual terminal,
+    /// in the home folder, typing `CODEX_HOME='<folder>' codex` (plain `codex` for `~/.codex`, where the CLI finds its login
+    /// differently once the variable is set at all), as the owner would type it: no skip switch, no prompt, nothing after
+    /// it. Codex refreshes the login as it starts; the owner then types /quit. Opened only by that click.
+    public static func loginRefresh(profileFolder: String, host: Host, home: String = NSHomeDirectory()) -> FreshSessionLaunch {
+        let profile = (profileFolder as NSString).expandingTildeInPath
+        let line = CLIEnvironment.isDefaultFolder(profile, for: .codex, home: home)
+            ? "codex" : "\(Provider.codex.folderEnvironmentKey)=\(quoted(profile)) codex"
+        return FreshSessionLaunch(host: host, folder: home, line: line)
+    }
+
     /// A folder there now (a link to one counts).
     public static func isFolder(_ path: String) -> Bool {
         var folder: ObjCBool = false
@@ -198,9 +209,11 @@ extension SessionEngine {
     /// injected launcher, so nothing here can open a window or type into a terminal. Once it opened, the failed turn no
     /// longer needs the owner (they went on elsewhere); its row still says why it stopped.
     public func openFresh(sessionID: String, provider: Provider, profileFolder: String) async -> Bool {
-        guard let launch = freshLaunch(sessionID: sessionID, provider: provider, profileFolder: profileFolder),
+        guard var launch = freshLaunch(sessionID: sessionID, provider: provider, profileFolder: profileFolder),
               let launcher = dependencies.openFresh ?? (configuration.startBridge ? FreshSessionLaunch.live : nil) else { return false }
-        let opened = await ReplySender.run { launcher(launch) }
+        // A Claude session starts in Claude Code's own background and the window attaches to it (P1470).
+        if provider == .claude { launch.line = await backgroundStartLine(folder: launch.folder, profile: profileFolder, plain: launch.line) }
+        let opened = await ReplySender.run { [launch] in launcher(launch) }
         if opened { clearTurnFailure(sessionID) }
         return opened
     }

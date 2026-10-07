@@ -34,8 +34,10 @@ extension SessionEngine {
         guard hookRequestBroker == nil, let url = configuration.hookRequestsSocketURL else { return }
         let start = dependencies.startHookRequests ?? Self.startHookRequestBroker
         let holdSwitch = subagentHoldSwitch, codexSwitch = codexHoldSwitch, backstop = dependencies.subagentHoldBackstop
+        let resumes = islandResumes
         let holds: HookRequestBroker.Holds = { line, object in
-            AttentionPolicy.brokerHold(line, object, answersSubagents: holdSwitch.isOn, answersCodex: codexSwitch.isOn, backstop: backstop)
+            AttentionPolicy.brokerHold(line, object, answersSubagents: holdSwitch.isOn, answersCodex: codexSwitch.isOn, backstop: backstop,
+                                       islandRun: resumes.isRunning)
         }
         do {
             hookRequestBroker = try start(url, holds, { [weak self] request in
@@ -135,9 +137,12 @@ extension SessionEngine {
         }
         guard ignoredSessionIDs[payload.sessionID] == nil else { return releaseBrokered(brokered.id) }
         let mode = brokered.object["permission_mode"] as? String
-        let surface = AttentionPolicy.claudeSurface(entrypoint: brokered.line.entrypoint, hasTerminal: brokered.line.hasTerminal)
+        // The island's own resume of the session (P1328): its card is the only place to answer.
+        let islandRun = islandResumes.isRunning(payload.sessionID)
+        let surface = AttentionPolicy.claudeSurface(entrypoint: brokered.line.entrypoint, hasTerminal: brokered.line.hasTerminal,
+                                                    islandRun: islandRun)
         let decision = AttentionPolicy.claude(entrypoint: brokered.line.entrypoint, hasTerminal: brokered.line.hasTerminal,
-                                              agentID: payload.agentID, permissionMode: mode)
+                                              agentID: payload.agentID, permissionMode: mode, islandRun: islandRun)
         attentionTally.count("claude.broker.\(surface)", in: \.opened)
         guard decision.show else {
             attentionTally.count(mode == "dontAsk" ? "dontAsk" : "headless", in: \.notShown)
@@ -168,13 +173,16 @@ extension SessionEngine {
             held = false
         }
         let holdsForIsland = forIsland && held
+        // A print-mode run shows no prompt and sends no `permission_prompt`: nothing would confirm its request, and an
+        // armed profile's window would release it unanswered, which Claude takes as a No. It is confirmed at once (P1328).
+        let confirmsAtOnce = holdsForIsland || (islandRun && held) || dependencies.confirmsRequestsAtOnce
         var request = AttentionRequest(
             id: brokered.id, sessionID: payload.sessionID, agentID: payload.agentID, agentType: payload.agentType, kind: kind,
             channel: held ? .answer(.broker) : .open, source: .broker, tool: .claudeCode, toolName: payload.toolName,
             toolUseID: payload.toolUseID, inputDigest: brokered.line.digest,
             transcriptPath: Self.claudeTranscriptPath(payload), content: content, openedAt: brokered.at,
-            state: holdsForIsland || dependencies.confirmsRequestsAtOnce ? .confirmed : .pending, agentPID: brokered.line.agentPID,
-            entrypoint: surface, place: decision.place, windowReleases: isArmed(payload.sessionID))
+            state: confirmsAtOnce ? .confirmed : .pending, agentPID: brokered.line.agentPID,
+            entrypoint: surface, place: decision.place, windowReleases: isArmed(payload.sessionID) && !islandRun)
         if holdsForIsland { request.holdEndsAt = brokered.at.addingTimeInterval(SubagentHold.limit) }
         request.permissionMode = mode
         attentionPayloads[request.id] = payload
@@ -183,7 +191,7 @@ extension SessionEngine {
     }
 
     private func takeCodexRequest(_ brokered: BrokeredRequest) {
-        // Held only for Answer Codex on the island (P470): the reviewer and where the owner looks are read first, within
+        // Held only for Answer Codex in Juice (P470): the reviewer and where the owner looks are read first, within
         // `showGrace`; every other Codex request is handed back at once (decision 15).
         if brokered.held { awaitCodexHold(brokered.id) } else { releaseBrokered(brokered.id) }
         guard var payload = Self.decodeCodex(brokered.line.input) else {

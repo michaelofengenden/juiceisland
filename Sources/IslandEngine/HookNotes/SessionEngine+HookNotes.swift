@@ -60,6 +60,7 @@ extension SessionEngine {
         if note.agentID == nil { keepLabels(note.sessionID) }
         noteClaudeSubagents(note, now: now)
         noteCodexWake(note, now: now)
+        if folds[note.sessionID] != nil { noteFoldAgent(note, turnBegins: turnBegins) }
         guard note.event == Self.stopFailureEvent else { return }
         if let session = state.session(id: note.sessionID), session.phase == .completed,
            hookNotes.completedRecently(note.sessionID, now: now) {
@@ -202,8 +203,13 @@ extension SessionEngine {
     /// The session's jump target with the notes' exact handles laid over upstream's: iTerm's session UUID from the
     /// hook's own environment (P17), the tty found from the agent's pid (P18), the tmux pane. Upstream's own target
     /// is left as it is in `state`, so its reducer never fights the overlay.
+    /// A session Codex's shared daemon runs gets no overlay: its notes' handles are the daemon's, from the first client's
+    /// tab (P1486).
     func effectiveJumpTarget(for session: AgentSession) -> JumpTarget? {
         guard let context = hookNotes.contexts[session.id] else { return session.jumpTarget }
+        if let pid = context.agentPID, agentIsCodexServer(pid) { return session.jumpTarget }
+        // Nor a session in Claude Code's own background: its notes' handles are the supervisor's first terminal (P1545).
+        if runsInClaudeBackground(session) { return session.jumpTarget }
         // Notes that name neither the host nor a tmux pane give nothing to jump to: still "no target".
         if session.jumpTarget == nil, context.hostBundleID == nil, context.tmuxPane == nil || context.tmuxSocketPath == nil {
             return nil
@@ -225,7 +231,14 @@ extension SessionEngine {
         return target
     }
 
-    func jumpContext(for sessionID: String) -> JumpContext? { hookNotes.contexts[sessionID]?.jumpContext }
+    func jumpContext(for sessionID: String) -> JumpContext? {
+        guard let context = hookNotes.contexts[sessionID] else { return nil }
+        // Not the daemon's handles or its parent's tty for a session Codex's shared daemon runs (P1486), nor the
+        // supervisor's for a session in Claude Code's own background (P1545).
+        if let pid = context.agentPID, agentIsCodexServer(pid) { return nil }
+        if let session = state.session(id: sessionID), runsInClaudeBackground(session) { return nil }
+        return context.jumpContext
+    }
 
     /// The session as the frontmost check should see it: with the exact handles, so a background split or pane is
     /// not taken for the tab in front (P17).

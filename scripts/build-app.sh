@@ -18,12 +18,50 @@
 # ONLY_ACTIVE_ARCH on, so no x86_64 compile runs: xcodebuild's default for a Release build is both chips, twice the
 # work, and the private app only ever runs on the Mac that built it (P890). Only --public --universal builds both.
 # update-app.sh and install-app.sh pass a staging folder to build into.
+# The app's and the widget's CFBundleShortVersionString are the VERSION file's first line, as the public flavor's are
+# (About shows it); the private updater never reads it, only the commit stamp (P1251).
 # Usage: zsh scripts/build-app.sh [--prod | --public [--universal]] [output-folder]
 # Overrides: JI_SIGN_IDENTITY (the identity's SHA-1 hash or name; "-" signs ad hoc), JI_LSREGISTER.
+# Every flavor first drops its DerivedData folder under output/ when that folder was made in another checkout folder
+# (P1554, drop_moved_derived below), saying so in one line: Xcode would look for its packages' artifacts there.
 set -euo pipefail
-[[ "${1-}" != --public ]] || { shift; exec zsh "${0:A:h}/build-public.sh" "$@" }
 root=${0:A:h:h}
 cd "$root"
+
+# A DerivedData folder records the absolute paths it was made for: its info.plist's WorkspacePath and, in
+# SourcePackages/workspace-state.json, each package's "path" and "location". After the checkout is moved or renamed,
+# Xcode still looks for a package's artifacts at the old path, and the build fails ("There is no XCFramework found at
+# '<old folder>/output/dd-public.noindex/SourcePackages/artifacts/sparkle/…'", P1554). A folder that names any absolute
+# path outside this checkout is build output only: it is removed, with one line, and the build makes it again. A folder
+# that names none, or only paths in here, is kept.
+drop_moved_derived() {
+  local derived=$1 dir=$root/$1 recorded=() p outside=
+  [[ -d $dir ]] || return 0
+  if [[ -f $dir/info.plist ]]; then
+    p=$(/usr/libexec/PlistBuddy -c 'Print :WorkspacePath' "$dir/info.plist" 2>/dev/null || true)
+    [[ -z $p ]] || recorded+=("$p")
+  fi
+  if [[ -f $dir/SourcePackages/workspace-state.json ]]; then
+    recorded+=(${(f)"$(sed 's#\\/#/#g' "$dir/SourcePackages/workspace-state.json" \
+      | grep -oE '"(path|location)"[[:space:]]*:[[:space:]]*"/[^"]*"' \
+      | sed -E 's/^"(path|location)"[[:space:]]*:[[:space:]]*"(.*)"$/\2/' || true)"})
+  fi
+  for p in $recorded; do
+    [[ $p == /* ]] || continue
+    [[ $p == "$root" || $p == "$root"/* ]] && continue
+    outside=$p
+    break
+  done
+  [[ -n $outside ]] || return 0
+  rm -rf -- "$dir"
+  print -u2 -r -- "build-app: removed $derived, made for another folder ($outside); the build makes it again"
+}
+
+if [[ "${1-}" == --public ]]; then
+  shift
+  drop_moved_derived output/dd-public.noindex
+  exec zsh "$root/scripts/build-public.sh" "$@"
+fi
 lsregister=${JI_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}
 team=TEAMID0000
 prod=0
@@ -35,6 +73,7 @@ else
   bundle_id=com.ofengenden.juice.dev name="Juice Island Dev" derived=output/dd.noindex out=${1:-output/app.noindex}
 fi
 [[ "$out" == /* ]] || out="$root/$out"
+drop_moved_derived "$derived"
 
 # The SHA-1 hash of an Apple Development identity whose certificate belongs to the owner's team. Reads the public
 # certificates only.
@@ -61,12 +100,15 @@ if (( prod )); then
   fi
 fi
 
+version=$(head -1 VERSION 2>/dev/null || true)
+[[ "$version" =~ '^[0-9]+(\.[0-9]+){1,2}$' ]] || { print -u2 "build-app: VERSION's first line is not 1.2 or 1.2.3: $version"; exit 2 }
+
 arch=$(uname -m)
 xcodegen generate --quiet
 xcodebuild -project JuiceIsland.xcodeproj -scheme JuiceIsland -configuration Release -derivedDataPath "$derived" \
   -destination "platform=macOS,arch=$arch" ARCHS="$arch" ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-  JI_BUNDLE_ID="$bundle_id" JI_PRODUCT_NAME="$name" \
+  JI_BUNDLE_ID="$bundle_id" JI_PRODUCT_NAME="$name" MARKETING_VERSION="$version" \
   build -quiet
 
 built=("$derived"/Build/Products/Release/*.app(N))
@@ -88,6 +130,10 @@ widget="$app/Contents/PlugIns/JuiceIslandWidget.appex"
 [[ -d "$widget" ]] || { print -u2 "build-app: no widget at ${widget#$app/}"; exit 1; }
 wid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$widget/Contents/Info.plist")
 [[ "$wid" == "$bundle_id.widget" ]] || { print -u2 "build-app: widget bundle id is $wid, not $bundle_id.widget"; exit 1; }
+for part in "$app" "$widget"; do
+  short=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$part/Contents/Info.plist")
+  [[ "$short" == "$version" ]] || { print -u2 "build-app: ${part:t} says version $short, not VERSION's $version"; exit 1; }
+done
 for part in "$app" "$widget"; do
   entitlements=$(codesign -d --entitlements - --xml "$part" 2>/dev/null) || entitlements=
   [[ "$entitlements" == *"<string>$team.$bundle_id</string>"* ]] \

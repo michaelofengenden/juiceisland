@@ -12,11 +12,11 @@ struct AnswerAllTests {
     typealias ID = FixtureSessionFeed.ID
     typealias AID = FixtureSessionFeed.AttentionID
 
-    /// Until `count` commands went and every card in `gone` went with them (sent first, resolved once sent: P129).
-    private func settle(_ feed: FixtureSessionFeed, count: Int, gone ids: [String], in env: AppEnvironment) async {
-        for _ in 0..<200 where feed.sentCommands.count < count || ids.contains(where: { env.sessions.card(for: $0) != nil }) {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+    /// Until `count` commands went and every card in `gone` went with them (sent first, resolved once sent: P129), for
+    /// 30 s worth of looks at most (`Looks`, P1253).
+    @discardableResult
+    private func settle(_ feed: FixtureSessionFeed, count: Int, gone ids: [String], in env: AppEnvironment) async -> Bool {
+        await Looks.until(30) { feed.sentCommands.count >= count && !ids.contains(where: { env.sessions.card(for: $0) != nil }) }
     }
 
     /// The cards scenario: five Claude approvals, a Codex one (Codex is Watch while the island does not answer it), a
@@ -213,8 +213,10 @@ struct AnswerAllTests {
         #expect(WindowKeyRouter.command(for: .init(character: "N", control: true, shift: true)) == .answerAll(.deny))
         let cards = BatchAnswer.targets(env)
         #expect(WindowKeyRouter.perform(.answerAll(.allowOnce), env: env))
-        await settle(feed, count: 5, gone: cards.map(\.sessionID), in: env)
+        // The line the press leaves, read before anything else has a turn: it lives `AnswerAllNote.lifetime` (6 s) on
+        // the wall clock, which a full run's main actor outlasted between the press and a look after the settle (P1260).
         #expect(env.answerAllNote?.text == "Allowed 5 approvals.")
+        #expect(await settle(feed, count: 5, gone: cards.map(\.sessionID), in: env))
         // Nothing left to batch: the key is not taken.
         #expect(!WindowKeyRouter.perform(.answerAll(.allowOnce), env: env))
         let one = AppEnvironment.demo(sessions: .prototype)

@@ -1418,6 +1418,9 @@ final class IslandPanelController {
             openSelection()
         case .cycleUsage:
             cycleUsage()
+        case .sendSelection:
+            // The keys' row, where its tab is known (P1300); nothing with no row selected.
+            if let id = ui.selectedRow, let row = env.sessions.row(id: id), env.offersSendToIsland(row) { env.sendToIsland(id) }
         case let .answerAll(decision):
             BatchAnswer.answer(decision, batch, env: env)
         case .switchBack:

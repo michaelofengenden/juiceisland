@@ -66,6 +66,36 @@ protocol SessionsModel: AnyObject, Observable {
     /// terminal window in the session's folder running the agent's CLI under that account, a fresh session. Only on the
     /// owner's click; the demo notes "Demo session".
     func openFresh(_ sessionID: String, in alternative: LimitAlternative)
+    /// The sessions sent to the island, newest first, as their conversation cards (P1300 to P1324).
+    var folded: [FoldedCardModel] { get }
+    /// Send to island (a row's menu or hover button, the island's S, the system-wide key), on the owner's click or key
+    /// only: the card goes on the island and the window into the Dock when it holds the tab alone. The answer: the
+    /// window's bounds, for the fold's motion, whether it went or stayed (P1360); nil when its terminal said nothing or
+    /// nothing folded.
+    func sendToIsland(_ sessionID: String) async -> TuckBounds?
+    /// The session whose tab is in front, for the system-wide key's Send front tab to island; nil for none.
+    func frontmostFoldable() async -> String?
+    /// A reply on a folded session's card: typed into its tab, or held for its turn's end, or through the agent's own
+    /// resume when the tab is gone (P1303, P1306).
+    func replyFolded(_ sessionID: String, text: String)
+    /// Cancel on a held reply.
+    func cancelHeld(_ sessionID: String)
+    /// Retry on a folded card's "Not sent".
+    func retryFolded(_ sessionID: String)
+    /// Stop on a resumed run.
+    func stopFolded(_ sessionID: String)
+    /// Continue on a card whose session stopped mid-turn (P1419): on the owner's click only, the agent's own resume with
+    /// the words the card shows.
+    func continueFolded(_ sessionID: String)
+    /// Open in terminal: the window back and its tab in front (or the conversation reopened, its tab gone); the card goes.
+    func openFolded(_ sessionID: String)
+    /// ✕ on a folded card: the card goes, the window stays where it is.
+    func unfold(_ sessionID: String)
+    /// Open in Claude, Open in Codex, Open in <App> (wave 8, P1510): on the owner's click on a card or a row's menu, the
+    /// session goes on in its agent's own app, once nothing else holds it (`SessionHandoff`).
+    func openInApp(_ sessionID: String)
+    /// Cancel on "Opens in Claude when this turn ends".
+    func cancelPendingApp(_ sessionID: String)
 }
 
 extension SessionsModel {
@@ -83,6 +113,19 @@ extension SessionsModel {
     func islandShows(requestID: String?) {}
     func windowShows(requestIDs: Set<String>) {}
     func openFresh(_ sessionID: String, in alternative: LimitAlternative) {}
+    var folded: [FoldedCardModel] { [] }
+    func sendToIsland(_ sessionID: String) async -> TuckBounds? { nil }
+    func frontmostFoldable() async -> String? { nil }
+    func replyFolded(_ sessionID: String, text: String) {}
+    func cancelHeld(_ sessionID: String) {}
+    func retryFolded(_ sessionID: String) {}
+    func stopFolded(_ sessionID: String) {}
+    func continueFolded(_ sessionID: String) {}
+    func openFolded(_ sessionID: String) {}
+    func unfold(_ sessionID: String) {}
+    func openInApp(_ sessionID: String) {}
+    func cancelPendingApp(_ sessionID: String) {}
+    func foldedCard(_ sessionID: String) -> FoldedCardModel? { folded.first { $0.sessionID == sessionID } }
     func openRequest(_ sessionID: String) { openRequest(sessionID, request: nil) }
     func dismissRequest(_ sessionID: String) { dismissRequest(sessionID, request: nil) }
     var needsYou: [SessionRow] { rows.filter { $0.bucket == .needsYou } }
@@ -200,6 +243,12 @@ struct SessionRow: Identifiable, Equatable, Sendable {
     /// Its card is an approval the agent waits on with no prompt of its own (`AttentionRequest.waitsOnIslandAlone`: Codex
     /// behind the old helper, Copilot CLI, Devin, Qwen Code): no mute rule keeps it quiet (P931).
     var waitsOnIsland = false
+    /// Its tab is known exactly, so it can be sent to the island (`SessionEngine.canFold`, P1300).
+    var canFold = false
+    /// Sent to the island: its conversation card stands for it in the island's list (P1307).
+    var isFolded = false
+    /// What its menu offers to go on in its agent's own app ("Open in Claude", P1510); nil: none.
+    var appOffer: String? = nil
 
     var isInterrupted: Bool { status == .interrupted }
     /// What the closed pill and the footer's count may tell of: every row of the owner's, a quiet one only while its
@@ -216,6 +265,187 @@ struct RowAccount: Hashable, Sendable {
     var provider: Provider
     var folder: String
     var accountID: String? = nil
+}
+
+/// A session sent to the island, as its conversation card draws it (P1300 to P1324): the row says who and what it is
+/// at (its glyph, mark, project and title, its state and tool); this says the rest.
+struct FoldedCardModel: Equatable, Sendable, Identifiable {
+    /// Where a reply goes now.
+    enum Reach: Equatable, Sendable {
+        /// Typed into its tab (route a).
+        case tab
+        /// Its tab is gone: the agent's own resume goes on with the conversation (route b).
+        case resume
+        /// Codex's shared background service holds the thread: a reply starts a turn there (P1487).
+        case daemon
+        /// Nowhere from the island: "Open in terminal to reply".
+        case openOnly
+        /// In Claude Code's own background: a reply goes through `claude attach` (wave 8, P1460).
+        case background
+    }
+
+    var sessionID: String
+    var id: String { sessionID }
+    /// Its row, as the lists would draw it, whether they list it or not (a session whose tab closed and ended is listed
+    /// nowhere else, P1303).
+    var row: SessionRow
+    var agent: GlyphPalette.Agent { row.agent }
+    /// The agent's last answer, whole, in its own Markdown; nil before the first. While a turn runs, the answer before it.
+    var message: String?
+    /// A turn runs (in its tab, or the island's resumed run): the card reads Working, and a reply waits for its end.
+    var working = false
+    var reach: Reach = .tab
+    /// One quiet line over the field: the resume's own note before its first reply, or "Not opened".
+    var note: String?
+    /// Why the last reply through the resume did not go, or its run failed ("Not sent · Claude Code not found",
+    /// "Failed · …"): it takes the note's place, and a reply that did not go keeps its Retry (P1331).
+    var problem: String?
+    /// A reply held for the turn's end, shown on the line ("Held · <text> · Cancel", P1358).
+    var held: String?
+    /// Where the last reply stands: "Sending…", "Sent", "Not sent · Retry".
+    var send: CardSend?
+    /// The island's resumed run is under way: Stop ends it.
+    var stoppable = false
+    /// A held reply that did not go, for the field to take back (P1356, P1359): only a new Return sends it.
+    var returned: String?
+    /// Why it did not go ("Not sent · its tab closed"); both stay until the next Return or ✕.
+    var unsent: String?
+    /// Its agent ended while its turn ran ("Stopped when its window closed", P1415): the line says so.
+    var stopped: String?
+    /// What Continue sends, shown on the card before the click, while Continue is offered: stopped, its resume offered,
+    /// nothing on its way or held (P1419).
+    var continuePrompt: String?
+    /// The terminal its window is in while that window sits in the Dock and its turn runs there: "Working in Terminal"
+    /// (P1417).
+    var inTerminal: String?
+    /// In Claude Code's own background, or on its way there (wave 8, P1450 on): the line says where it stands.
+    var background: FoldedBackgroundModel? = nil
+    /// Continue or a reply met a turn Codex's background service goes on with: "Codex is still finishing this in the
+    /// background" (P1488). Otherwise such a turn reads Working.
+    var finishing = false
+    /// Open in <App>: what the card offers, and where the hand-over stands (P1510 to P1519); nil: no app for it.
+    var app: FoldedAppModel? = nil
+
+    /// Open in terminal carries the stopped turn on in the new window, with `SessionEngine.continuePrompt` (P1439): the
+    /// session stopped mid-turn, and its resume can open it.
+    var continuesInTerminal: Bool { stopped != nil && (reach == .resume || reach == .daemon) }
+
+    /// A message too long to read here whole: its box scrolls and ends with Open in terminal.
+    var isLong: Bool { (message?.count ?? 0) > Self.longMessage || (message?.split(whereSeparator: \.isNewline).count ?? 0) > Self.longLines }
+
+    static let longMessage = 600
+    static let longLines = 8
+}
+
+/// A folded Claude Code session in Claude Code's own background, as its card's line says it (wave 8, P1450 on).
+struct FoldedBackgroundModel: Equatable, Sendable {
+    enum Stage: Equatable, Sendable {
+        /// Something waits on the owner in its tab: "Moves to the background when this turn ends".
+        case waits
+        /// `/background` was typed: "Moving to the background…".
+        case moving
+        /// "Background", with Working or "attached in Terminal".
+        case moved
+        /// Stop ran, or it ended: "Background · stopped".
+        case stopped
+        /// The move did not happen: its words ("Not moved · it is still in its tab").
+        case notMoved(String)
+    }
+
+    var stage: Stage
+    /// The terminal a window attached to it runs in, while one is.
+    var attachedIn: String? = nil
+
+    /// The line's words, but Working's, which the line draws with its tool.
+    var words: String {
+        switch stage {
+        case .waits: "Moves to the background when this turn ends"
+        case .moving: "Moving to the background…"
+        case .moved: attachedIn.map { "Background · attached in \($0)" } ?? "Background"
+        case .stopped: "Background · stopped"
+        case let .notMoved(words): words
+        }
+    }
+
+    /// The line's help. `/background` is typed after whatever sits unsent in its tab's prompt, which goes with it: the
+    /// card says so while it waits, moves or did not move (P1543).
+    var help: String {
+        switch stage {
+        case .waits: "It waits on you in its tab. Once its turn ends, /background is typed there: send or clear what you typed in it"
+        case .moving: "/background was typed into its tab; anything typed there and not sent went with it"
+        case .notMoved: "Text typed in its tab and not sent would have gone with /background: look in its tab"
+        case .moved, .stopped: "It runs in Claude Code's background: closing a window leaves it running"
+        }
+    }
+}
+
+/// A folded card's Open in <App> (P1510 to P1519): offered, waiting for its turn's end, under way, in the app, picked
+/// there, or refused and why.
+struct FoldedAppModel: Equatable, Sendable {
+    enum State: Equatable, Sendable {
+        case offered
+        /// "Opens in Claude when this turn ends · Cancel".
+        case pending
+        /// "Opening in Claude…".
+        case opening
+        /// "In Claude", or why Open in terminal waits ("Quit Claude first").
+        case inApp(note: String?)
+        /// "Pick this session in VS Code".
+        case pick
+        /// It did not go: why, in one line.
+        case blocked(String)
+    }
+
+    var app: HandoffApp
+    var state: State
+    /// It can be clicked again (offered, or refused once).
+    var offered = false
+
+    /// "Claude", "Codex", "VS Code".
+    var name: String { app.name }
+    var title: String { "Open in \(name)" }
+
+    /// The reply field hides while the app holds the conversation, is about to, or waits to (no reply would reach it).
+    var hidesField: Bool {
+        switch state {
+        case .offered, .blocked: false
+        case .pending, .opening, .inApp, .pick: true
+        }
+    }
+
+    /// What the line's left says; nil: nothing (only the link offers it).
+    var words: String? {
+        switch state {
+        case .offered: nil
+        case .pending: HandoffWords.pending(app)
+        case .opening: HandoffWords.opening(app)
+        case let .inApp(note): note ?? HandoffWords.inApp(app)
+        case .pick: HandoffWords.pick(app)
+        case let .blocked(why): why
+        }
+    }
+
+    /// The words say why it waits or did not go: the waits colour.
+    var warns: Bool {
+        switch state {
+        case .blocked: true
+        case let .inApp(note): note != nil
+        default: false
+        }
+    }
+
+    /// The card's model of the engine's state and offer.
+    static func make(state: HandoffState?, offer: HandoffOffer?) -> FoldedAppModel? {
+        guard let state else { return offer.map { FoldedAppModel(app: $0.app, state: .offered, offered: true) } }
+        let mapped: State = switch state {
+        case .pending: .pending
+        case .opening: .opening
+        case let .inApp(_, note): .inApp(note: note)
+        case .pick: .pick
+        case let .blocked(_, why): .blocked(why)
+        }
+        return FoldedAppModel(app: state.app, state: mapped, offered: offer != nil)
+    }
 }
 
 /// The cards (question, approval, plan ready, done) as plain values, and the island's quota notice (P125), which is

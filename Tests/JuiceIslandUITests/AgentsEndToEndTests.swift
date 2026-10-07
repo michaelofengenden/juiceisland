@@ -256,7 +256,7 @@ struct AgentsEndToEndTests {
         await rig.settle()
     }
 
-    /// Codex, with Answer Codex on the island: its hooks as Juice writes them (the helper alone, no `--source`, P290), its
+    /// Codex, with Answer Codex in Juice: its hooks as Juice writes them (the helper alone, no `--source`, P290), its
     /// approval held while the card shows and answered with Codex's exact output.
     private func codex(_ world: World) async throws {
         let rig = world.rig

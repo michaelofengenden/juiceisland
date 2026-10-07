@@ -315,15 +315,15 @@ struct ThemeTests {
         let env = AppEnvironment(settings: .ephemeral(), usage: DemoUsageModel(now: DemoClock.now),
                                  sessions: DStub(rows: [DStub.row("run", .codex, .running)]))
         let reloads = ReloadCounter()
-        let feed = WidgetFeed(env: env, store: store, clock: { DemoClock.now }, reload: { reloads.bump() })
+        let feed = WidgetFeed(env: env, store: store, clock: { DemoClock.now }, reload: { reloads.bump($0) })
         feed.start()
         feed.drain()
-        #expect(reloads.count == 1 && store.read()?.juiceTheme == .black)
+        #expect(reloads.of(.sessions) == 1 && store.read()?.juiceTheme == .black)
         env.settings.juiceTheme = .glass
         for _ in 0..<100 where feed.last?.juiceTheme != .glass { try await Task.sleep(for: .milliseconds(10)) }
         feed.drain()
         #expect(store.read()?.juiceTheme == .glass)
-        #expect(reloads.count == 2, "within the floor, and still at once")
+        #expect(reloads.of(.sessions) == 2, "within the floor, and still at once")
         // Liquid's running look is followed by itself too (P388, P525), not only with the next other change.
         env.settings.liquidRunning = .full
         for _ in 0..<100 where feed.last?.liquidRunning != "full" { try await Task.sleep(for: .milliseconds(10)) }

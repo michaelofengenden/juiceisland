@@ -48,9 +48,13 @@ struct BatteryView: View {
         .accessibilityLabel(inUse ? battery.hoverLabel + ", in use" : battery.hoverLabel)
         .hoverTarget(id: battery.id, label: battery.hoverLabel)
         .contextMenu {
-            let refresh = actions.refreshAccountItem(battery.id)
-            Button(refresh.title) { actions.refreshAccount(battery.id) }
-                .disabled(!refresh.isEnabled)
+            switch Self.firstMenuItem(battery, actions: actions) {
+            case .refreshLogin:
+                Button(Self.refreshLoginTitle) { actions.refreshLogin?(battery.id) }
+            case .refreshAccount(let refresh):
+                Button(refresh.title) { actions.refreshAccount(battery.id) }
+                    .disabled(!refresh.isEnabled)
+            }
             if let email = actions.email(battery.id) {
                 Button("Copy email") {
                     NSPasteboard.general.clearContents()
@@ -85,7 +89,7 @@ struct BatteryView: View {
 
     @ViewBuilder private func bodyShape<Cut: BatteryCutting>(cut: Cut, track: Color) -> some View {
         switch battery.state {
-        case .signInNeeded, .signingIn:
+        case .signInNeeded, .signingIn, .loginLapsed:
             RoundedRectangle(cornerRadius: M.radius)
                 .strokeBorder(palette.line, style: StrokeStyle(lineWidth: M.outline, dash: [2, 2]))
         case .usedUp, .noPlan, .noLimits:
@@ -136,6 +140,8 @@ struct BatteryView: View {
         case .signInNeeded:
             // The prototype's key (ring left, bit right), as the window draws it; the SF Symbol points the other way.
             BatteryKeyGlyph(colour: palette.tone(Theme.attention)).frame(width: 13, height: 8)
+        case .loginLapsed:
+            BatteryRefreshGlyph(colour: palette.tone(Theme.attention)).frame(width: 10, height: 10)
         case .signingIn:
             HStack(spacing: 2.5) {
                 ForEach(0..<3, id: \.self) { _ in Circle().fill(palette.ink2).frame(width: 2.5, height: 2.5) }
@@ -151,6 +157,23 @@ struct BatteryView: View {
 
     /// How far a No plan battery dims (P360).
     static let noPlanOpacity: Double = 0.5
+    /// A lapsed Codex login's menu item and button (P1551).
+    static let refreshLoginTitle = "Refresh login"
+
+    /// The first item of a battery's menu.
+    enum FirstMenuItem: Equatable {
+        case refreshLogin
+        case refreshAccount(AccountRefreshMenu.Item)
+    }
+
+    /// A lapsed login (P1551) is refreshed by Codex, on this click, where the surface wires Refresh login (the panel, the
+    /// island's usage block and header strip, Settings › Accounts); its reads follow by themselves. Anywhere else, and on
+    /// every other battery, Refresh account as the surface says (greyed where it reads nothing), never an item that does
+    /// nothing.
+    @MainActor static func firstMenuItem(_ battery: BatteryModel, actions: PanelActions) -> FirstMenuItem {
+        if battery.state == .loginLapsed, actions.refreshLogin != nil { return .refreshLogin }
+        return .refreshAccount(actions.refreshAccountItem(battery.id))
+    }
 
     /// The in-use dot (P811), centred over the body (not the nub), as the Next bar is under it.
     static func inUseMark(_ colour: Color) -> some View {

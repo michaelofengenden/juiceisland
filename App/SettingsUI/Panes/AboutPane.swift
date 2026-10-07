@@ -12,7 +12,7 @@ struct AboutPane: View {
             VStack(spacing: 8) {
                 AppIconView()
                 Text(env.flavor.productName).font(Fonts.sys(22, .bold)).foregroundStyle(SettingsTheme.ink).padding(.top, 4)
-                Text(Self.buildLine(env.updateChecker.stamp, flavor: env.flavor)).font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink2)
+                Text(Self.buildLine(env.updateChecker.stamp)).font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink2)
                 Text("Engine from Open Island (GPL-3.0)").font(Fonts.sys(11)).foregroundStyle(SettingsTheme.ink3)
                 if let licence = Self.licenceLine(flavor: env.flavor) {
                     if let text = Self.licenceURL(resources: Bundle.main.resourceURL) {
@@ -57,10 +57,11 @@ struct AboutPane: View {
         return file
     }
 
-    /// The build: its stamp; the public flavor's starts with its version ("Version 1.2.0 · Build 1a2b3c4 · …").
-    static func buildLine(_ stamp: BuildStamp, flavor: AppFlavor = Product.flavor,
+    /// The build: its version, the VERSION file's in either flavor (`build-app.sh`, `build-public.sh`), then its stamp
+    /// ("Version 1.2.0 · Build 1a2b3c4 · …", P1251). The private app's updater compares the stamp's commit, never this.
+    static func buildLine(_ stamp: BuildStamp,
                           version: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) -> String {
-        guard flavor.isPublic, let version, !version.isEmpty else { return stamp.aboutLine() }
+        guard let version, !version.isEmpty else { return stamp.aboutLine() }
         return "Version \(version) · " + stamp.aboutLine()
     }
 }

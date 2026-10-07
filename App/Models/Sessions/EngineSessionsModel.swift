@@ -59,6 +59,12 @@ final class EngineSessionsModel: SessionsModel {
     /// Past the first mapping: a card that begins to wait from then on came in while the owner could be looking.
     @ObservationIgnored private var mappedOnce = false
     @ObservationIgnored private var minuteTimer: Timer?
+    /// Each folded session's last answer as last seen, shown while its next turn runs (P1308).
+    @ObservationIgnored private var foldMessages: [String: String] = [:]
+    /// The answer each folded session had as the island's last resumed run of it began ("" for none), so a run whose
+    /// hooks reported no answer shows the run's own once it ended (contract R3); and the sessions whose run is under way.
+    @ObservationIgnored private var foldRunBase: [String: String] = [:]
+    @ObservationIgnored private var foldRunLive: Set<String> = []
 
     static let requestedJumpLimit = 20
 
@@ -75,11 +81,13 @@ final class EngineSessionsModel: SessionsModel {
     private struct Mapped: Equatable {
         var rows: [SessionRow]
         var cards: [String: SessionCard]
+        /// The folded sessions' conversation cards, newest first (P1300).
+        var folded: [FoldedCardModel] = []
 
         /// Equal when views would draw the same. A row's `updatedAt` counts only to its minute: every hook event of a
         /// running session moves it, and ages show whole minutes, which the minute clock redraws anyway.
         static func == (lhs: Mapped, rhs: Mapped) -> Bool {
-            lhs.cards == rhs.cards && lhs.rows.map(\.drawnAge) == rhs.rows.map(\.drawnAge)
+            lhs.cards == rhs.cards && lhs.folded == rhs.folded && lhs.rows.map(\.drawnAge) == rhs.rows.map(\.drawnAge)
         }
     }
 
@@ -139,6 +147,11 @@ final class EngineSessionsModel: SessionsModel {
         return current().rows
     }
 
+    var folded: [FoldedCardModel] {
+        _ = revision
+        return current().folded
+    }
+
     func card(for sessionID: String) -> SessionCard? {
         _ = revision
         let mapped = current()
@@ -168,7 +181,8 @@ final class EngineSessionsModel: SessionsModel {
         let fresh = withObservationTracking {
             let rows = mapRows()
             let cards = rows.compactMap { row in makeCard(for: row.id).map { (row.id, $0) } }
-            return Mapped(rows: rows, cards: Dictionary(uniqueKeysWithValues: cards))
+            let folded = engine.foldedSessions.compactMap { fold in foldedCard(fold, listed: rows.first { $0.id == fold.sessionID }) }
+            return Mapped(rows: rows, cards: Dictionary(uniqueKeysWithValues: cards), folded: folded)
         } onChange: { [weak self] in
             // The engine is main-actor isolated: its changes, and so this, happen on the main thread.
             MainActor.assumeIsolated { self?.engineChanged() }
@@ -699,7 +713,183 @@ final class EngineSessionsModel: SessionsModel {
             firstPrompt: engine.firstPrompt(for: session), remoteHost: remote?.hostName, limit: limit,
             // An SSH session's folders are the host's: never one of this Mac's accounts (P816).
             account: remote != nil ? nil : engine.accountTag(for: session.id).map { RowAccount(provider: $0.provider, folder: $0.folder, accountID: $0.accountID) },
-            waitsOnIsland: head?.waitsOnIslandAlone == true)
+            waitsOnIsland: head?.waitsOnIslandAlone == true, canFold: engine.canFold(sessionID: session.id),
+            isFolded: engine.isFolded(session.id), appOffer: engine.appHandoff?.offer(for: session.id)?.title)
+    }
+
+    // MARK: Folded sessions (P1300 to P1324)
+
+    /// A folded session's card, from the engine's fold: its row (the listed one, or one made for a session that ended
+    /// and is listed nowhere, from the fold's own copy once upstream's monitor dropped it, P1355), its last answer (kept
+    /// while a new turn runs, as upstream's metadata drops it at the next prompt), where a reply goes and where the last
+    /// one stands.
+    private func foldedCard(_ fold: FoldedSession, listed: SessionRow?) -> FoldedCardModel? {
+        guard let session = engine.state.session(id: fold.sessionID) ?? fold.session else { return nil }
+        let row = listed ?? row(for: session)
+        let resume = engine.conversationResume
+        let running = resume?.isRunning(fold.sessionID) == true
+        let reported = Self.lastMessage(session) ?? foldMessages[fold.sessionID]
+        foldMessages[fold.sessionID] = reported
+        var message = reported
+        if running {
+            if foldRunLive.insert(fold.sessionID).inserted { foldRunBase[fold.sessionID] = reported ?? "" }
+        } else {
+            foldRunLive.remove(fold.sessionID)
+            // The run ended and its hooks reported nothing new: its own final text.
+            if let base = foldRunBase[fold.sessionID], (reported ?? "") == base, let answer = resume?.answer(fold.sessionID) {
+                message = answer
+            }
+        }
+        let reach = engine.foldReach(fold.sessionID)
+        let working = engine.foldTurnRuns(fold.sessionID)
+        // Codex's background service's note waits for its turn's end: until then the card reads Working (P1487).
+        let resumeNote: String? = switch reach {
+        case let .resume(note): note
+        case let .daemon(note): working ? nil : note
+        default: nil
+        }
+        // Why the last resumed reply did not go or its run failed, said only where a reply goes on through the resume
+        // and only once this fold tried one (a fold of later has nothing to do with it). A background session's: why a
+        // reply through its attach, or its Stop, did not go (P1460, P1463).
+        // Codex's background service still runs the turn Continue or a reply met (P1488): said as that, never as a failure.
+        let saysFinishing = resume?.problem(fold.sessionID) == SessionResumer.finishingWords
+        let problem: String? = switch reach {
+        case .resume, .daemon: (fold.resumed || fold.send == .notSent) && !saysFinishing ? resume?.problem(fold.sessionID) : nil
+        case .background: engine.claudeBackground?.problem(fold.sessionID)
+        case .tab, .openOnly: nil
+        }
+        let send: CardSend? = switch fold.send {
+        case .sending: .sending
+        case .sent: .sent
+        case .notSent: .notSent
+        case nil: nil
+        }
+        let route: FoldedCardModel.Reach = switch reach {
+        case .tab: .tab
+        case .resume: .resume
+        case .daemon: .daemon
+        case .openOnly: .openOnly
+        case .background: .background
+        }
+        let background = fold.background.flatMap { Self.backgroundModel($0, working: working) }
+        // Continue only on a stopped session its resume can carry on, with nothing on its way or held (P1419).
+        let offersContinue = fold.stopped != nil && (route == .resume || route == .daemon) && !working && fold.send != .sending
+            && fold.held == nil
+        // Continue or a reply met a turn Codex's background service goes on with; otherwise the card reads Working (P1488).
+        let finishing = saysFinishing && route != .tab && !running && resume?.serviceTurnRuns(fold.sessionID) == true
+        return FoldedCardModel(
+            sessionID: fold.sessionID, row: row, message: message, working: working,
+            reach: route,
+            note: fold.notOpened ? "Not opened" : resumeNote, problem: problem, held: fold.held, send: send,
+            // A background copy's Stop, but never while an app holds or takes the conversation (P1535).
+            stoppable: running || background?.stage == .moved && engine.appHandoff?.app(holding: fold.sessionID) == nil, returned: fold.returned?.text, unsent: fold.returned.map { Self.unsentWords($0.why, reach: route) },
+            stopped: fold.stopped?.words, continuePrompt: offersContinue ? SessionEngine.continuePrompt : nil,
+            // The window still holds the run while it sits in the Dock (P1417).
+            inTerminal: fold.tucked && route == .tab && working && !running ? fold.host : nil,
+            background: background, finishing: finishing,
+            app: engine.appHandoff.flatMap { FoldedAppModel.make(state: $0.state(for: fold.sessionID), offer: $0.offer(for: fold.sessionID)) })
+    }
+
+    /// A background fold as its card's line says it (P1450 on). A move that did not happen but left its tab sure (not
+    /// typed, or its tab in front) is said until a turn runs in that tab again; then the card is a tab's card.
+    static func backgroundModel(_ background: FoldBackground, working: Bool = false) -> FoldedBackgroundModel? {
+        let stage: FoldedBackgroundModel.Stage
+        switch background.stage {
+        case .waitsForTurnEnd: stage = .waits
+        case .moving: stage = .moving
+        // A reply woke a stopped one once a turn runs there again.
+        case .moved: stage = !working && (background.stoppedByOwner || background.listed?.hasEnded == true) ? .stopped : .moved
+        case let .notMoved(miss):
+            if working, !background.leftItUnsure { return nil }
+            // It may run in the background under an id the list could not tell: no "Not moved" then (P1457).
+            stage = .notMoved(miss == .cannotTell ? "Not sure it moved to the background" : "Not moved · " + miss.rawValue)
+        }
+        return FoldedBackgroundModel(stage: stage, attachedIn: stage == .moved ? background.attachedIn : nil)
+    }
+
+    /// Why a held reply went back to the field (P1356, P1359), as the card's line says it.
+    static func unsentWords(_ why: ReturnedReply.Why, reach: FoldedCardModel.Reach) -> String {
+        switch why {
+        case .tabInFront: "Not sent · its tab was in front"
+        case .windowInFront: "Not sent · its window was in front"
+        case .wayChanged:
+            switch reach {
+            case .tab: "Not sent · its tab is back"
+            case .resume: "Not sent · its tab closed"
+            case .daemon, .openOnly: "Not sent"
+            case .background: "Not sent · it moved to the background"
+            }
+        }
+    }
+
+    func sendToIsland(_ sessionID: String) async -> TuckBounds? {
+        guard case let .folded(bounds) = await engine.fold(sessionID: sessionID) else { return nil }
+        return bounds
+    }
+
+    func frontmostFoldable() async -> String? { await engine.frontmostFoldable() }
+
+    func replyFolded(_ sessionID: String, text: String) {
+        Task { await engine.replyFolded(sessionID: sessionID, text: text) }
+    }
+
+    func cancelHeld(_ sessionID: String) { engine.cancelHeldReply(sessionID: sessionID) }
+
+    func retryFolded(_ sessionID: String) {
+        Task { await engine.retryFolded(sessionID: sessionID) }
+    }
+
+    func stopFolded(_ sessionID: String) { engine.stopFolded(sessionID: sessionID) }
+
+    func continueFolded(_ sessionID: String) {
+        Task { await engine.continueFolded(sessionID: sessionID) }
+    }
+
+    /// Open in terminal: live, the window back and the exact jump (or the conversation reopened); the demo unfolds and
+    /// notes "Demo session", as its jumps do.
+    func openFolded(_ sessionID: String) {
+        guard case .live = jumps else {
+            engine.unfold(sessionID: sessionID)
+            return show(JumpNote(sessionID: sessionID, text: JumpNote.demo))
+        }
+        guard jumpsInFlight.insert(sessionID).inserted else { return }
+        noteRequested(sessionID)
+        let engine = engine
+        Task { @MainActor [weak self] in
+            let outcome = await engine.openFolded(sessionID: sessionID)
+            self?.jumpsInFlight.remove(sessionID)
+            if let outcome { self?.note(outcome) }
+        }
+    }
+
+    /// Open in <App> (P1510): live, the hand-over runs off the main thread's waits; a row's outcome that needs saying
+    /// ("Update Claude Code to open this in Claude", "Pick this session in VS Code") is a note under the row, and a folded
+    /// card says it on its line. The demo only notes "Demo session".
+    func openInApp(_ sessionID: String) {
+        guard case .live = jumps else { return show(JumpNote(sessionID: sessionID, text: JumpNote.demo)) }
+        guard let handoff = engine.appHandoff else { return }
+        let folded = engine.isFolded(sessionID)
+        Task { @MainActor [weak self] in
+            await handoff.open(sessionID)
+            // A folded card keeps what it came to on its line; a row says it once, under itself.
+            guard !folded, let state = handoff.state(for: sessionID) else { return }
+            switch state {
+            case let .blocked(_, why): self?.show(JumpNote(sessionID: sessionID, text: why))
+            case let .pick(app): self?.show(JumpNote(sessionID: sessionID, text: HandoffWords.pick(app)))
+            case .inApp, .opening, .pending: break
+            }
+            if case .opening = state { return }
+            handoff.forget(sessionID)
+        }
+    }
+
+    func cancelPendingApp(_ sessionID: String) { engine.appHandoff?.cancelPending(sessionID) }
+
+    func unfold(_ sessionID: String) {
+        engine.unfold(sessionID: sessionID)
+        foldMessages[sessionID] = nil
+        foldRunBase[sessionID] = nil
+        foldRunLive.remove(sessionID)
     }
 
     /// The limit or API error the session's last turn stopped on, worded at this mapping's time (P700), with its account

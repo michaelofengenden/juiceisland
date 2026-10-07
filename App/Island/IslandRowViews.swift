@@ -40,7 +40,7 @@ extension View {
 
 /// The row glyph in a 16 pt column: Pixel at 14 pt (pixel 2); Liquid and Sand at 20 pt, so their fine marks read at a
 /// row's size, laid out as the column's 16 pt square they centre on, so the row keeps its height and layout.
-private struct RowGlyph: View {
+struct RowGlyph: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.juiceTheme) private var theme
     private var palette: IslandPalette { theme.island }
@@ -89,7 +89,9 @@ struct CleanSessionRow: View {
     var animated = true
     /// The island list's frames: a finished row reports its line's width for its peek (P311).
     var lineFrames: IslandRowFrames?
-    @State private var hovering = false
+    @State private var hoveringRow = false
+    @Environment(\.previewRowHovered) private var previewHovered
+    private var hovering: Bool { hoveringRow || previewHovered }
 
     private typealias M = IslandTheme.Metrics
 
@@ -104,7 +106,7 @@ struct CleanSessionRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             trailing.frame(height: size.rowTitleHeight)
         }
-        .onHover { hovering = $0 }
+        .onHover { hoveringRow = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityValue(SessionRowText.cleanStatus(row).word ?? "")
     }
@@ -144,6 +146,8 @@ struct CleanSessionRow: View {
 
     private var trailing: some View {
         HStack(spacing: 8) {
+            // Send to island, under the pointer, where the session's tab is known (P1300).
+            if hovering, env.offersSendToIsland(row) { SendToIslandButton(sessionID: row.id) }
             // A remote session's host (P745), before the age column.
             if let host = row.remoteHost { Text(host).font(Fonts.sys(size.text(11))) }
             Group {
@@ -159,6 +163,27 @@ struct CleanSessionRow: View {
         }
         .foregroundStyle(palette.rowAge)
         .fixedSize()
+    }
+}
+
+/// A row's Send to island, under the pointer (P1300): the pill-and-arrow mark, in the jump's ink, its hit box the row's
+/// title line. The row's own click still opens or jumps; this click only sends.
+struct SendToIslandButton: View {
+    let sessionID: String
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.juiceTheme) private var theme
+    @State private var hovered = false
+
+    var body: some View {
+        Button { env.sendToIsland(sessionID) } label: {
+            FoldIcon(colour: hovered ? theme.island.ink : theme.island.jump, side: 12)
+                .frame(width: 18, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Send to island")
+        .accessibilityLabel("Send to island")
     }
 }
 
@@ -264,6 +289,7 @@ struct DetailedSessionRow: View {
     var sharedHost: String?
     /// The island list's frames: a finished row reports its line's width for its peek (P311).
     var lineFrames: IslandRowFrames?
+    @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: IslandTheme.Metrics.rowGlyphGap) {
@@ -272,6 +298,8 @@ struct DetailedSessionRow: View {
                 HStack(spacing: 12) {
                     RowTitleLine(row: row, size: size.text(12), markSize: Theme.Mark.sessionRow)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // Send to island, under the pointer, where the session's tab is known (P1300).
+                    if hovering, env.offersSendToIsland(row) { SendToIslandButton(sessionID: row.id) }
                     firstTags
                 }
                 .frame(height: size.line(19, for: 12))
@@ -289,6 +317,7 @@ struct DetailedSessionRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
     }
 

@@ -56,6 +56,8 @@ enum IslandKeyCommand: Equatable, Sendable {
     case openSelection
     /// U over the list: the usage block's next battery (`UsageCycle`, P461).
     case cycleUsage
+    /// S over the list: the keys' row goes to the island, as its Send to island does (P1300).
+    case sendSelection
     /// Allow all (Yes) or Deny all (No) on an approval card while two or more wait: each approval `BatchAnswer` covers,
     /// as its own Yes or No would (P1031).
     case answerAll(ApprovalDecision)
@@ -71,7 +73,7 @@ enum IslandKeyCommand: Equatable, Sendable {
         switch self {
         case let .approve(id, _), let .chooseOption(id, _): id
         case .close, .jumpToNextNeedsYou, .showAsWindow, .openSettings, .moveSelection, .openSelection, .cycleUsage, .answerAll,
-             .switchBack, .swallow: nil
+             .switchBack, .sendSelection, .swallow: nil
         }
     }
 }
@@ -169,6 +171,8 @@ enum IslandKeyRouter {
     static let returnKeys: Set<String> = ["\r", "\u{3}"]
     /// Steps through the usage (P461), as the character typed, so it is the key that types U on any layout (P40).
     static let usageKey = "u"
+    /// Sends the keys' row to the island (P1300), as the character typed.
+    static let sendKey = "s"
 
     /// ↑, ↓ and Return with no modifier, over the list and outside a field being edited (P321). A held Return's
     /// repeats are eaten wherever they land: the first opens a row's card, and a repeat must not then submit the field
@@ -179,6 +183,7 @@ enum IslandKeyRouter {
         let isReturn = returnKeys.contains(key.characters)
         if isReturn, key.isRepeat { return .swallow }
         if keys.enabled, listing, !key.editing, key.characters.lowercased() == usageKey { return key.isRepeat ? .swallow : .cycleUsage }
+        if keys.enabled, listing, !key.editing, key.characters.lowercased() == sendKey { return key.isRepeat ? .swallow : .sendSelection }
         guard listing, !key.editing, !key.shift else { return nil }
         if key.characters == upArrow { return .moveSelection(-1) }
         if key.characters == downArrow { return .moveSelection(1) }
@@ -199,7 +204,8 @@ enum IslandKeyRouter {
             if let drawn, drawn.sessionID == id { return drawn }
             return sessions.card(for: id)
         }
-        // Detailed's Codex group lists only sessions the rows hide; `shown` is the same in either style.
+        // Detailed's Codex group lists only sessions the rows hide; `shown` is the same in either style. A folded session is
+        // not among them: its conversation card says it waits, and its own card shows the request (P1307).
         let shown = IslandListLayout.make(rows: sessions.rows, style: .clean, showAll: showAll, now: sessions.now).shown
         if let selected, shown.contains(where: { $0.id == selected }) { return sessions.card(for: selected) }
         return shown.first { $0.bucket == .needsYou }.flatMap { sessions.card(for: $0.id) }

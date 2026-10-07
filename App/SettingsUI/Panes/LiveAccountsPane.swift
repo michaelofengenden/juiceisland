@@ -46,6 +46,7 @@ struct LiveAccountsPane: View {
                                          forget: model.canEdit ? { model.forget($0.id) } : nil,
                                          canForget: { model.canForget(provider: $0.provider, folder: $0.folder) },
                                          remove: model.canEdit ? { model.removeAccount(login: row.id) } : nil,
+                                         refreshLogin: { [id = row.id] in model.refreshLogin(id) },
                                          below: AnyView(NewFolderHooksLines(model: model, folders: row.folders)))
                         }
                         ForEach(list?.folders ?? []) { LiveLooseFolderRow(model: model, loose: $0) }
@@ -170,13 +171,22 @@ struct LoginRowView: View {
     var canForget: (Account) -> Bool = { _ in false }
     /// Remove account (P362); nil offers none.
     var remove: (() -> Void)?
+    /// Refresh login, on a lapsed Codex login (P1551): the line under the row and its battery's menu; nil offers none.
+    var refreshLogin: (@MainActor @Sendable () -> Void)?
     var below: AnyView?
     /// Remove's confirmation, in the row (renders pass one already armed).
     @State var removal = RemoveConfirmation()
 
+    /// What its battery's menu acts on: Refresh login, when the row has it.
+    var batteryActions: PanelActions {
+        guard let refreshLogin else { return PanelActions() }
+        return PanelActions(refreshLogin: { _ in refreshLogin() })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             line
+            if row.battery.state == .loginLapsed, let refreshLogin { LoginLapsedLine(refresh: refreshLogin) }
             if let below { below }
         }
         .padding(.horizontal, 12)
@@ -240,6 +250,7 @@ struct LoginRowView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             planColumn
             BatteryView(battery: row.battery, now: now, theme: theme)
+                .environment(\.panelActions, batteryActions)
                 .opacity(row.monitored ? 1 : 0.42)
                 .frame(width: 45)
             if let monitor {
@@ -248,6 +259,29 @@ struct LoginRowView: View {
             }
         }
         .frame(minHeight: 30)
+    }
+}
+
+/// A lapsed Codex login's line under its row (P1550, P1551): what to do, in one plain line, and Refresh login, which opens
+/// Codex in the login's folder in a new terminal window on the owner's click; under them, the hint for once it starts.
+struct LoginLapsedLine: View {
+    let refresh: @MainActor () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Rules.loginLapsedWords)
+                    .font(Fonts.sys(12.5))
+                    .foregroundStyle(SettingsTheme.statusAmber)
+                Text(Rules.loginRefreshHint)
+                    .font(Fonts.sys(11.5))
+                    .foregroundStyle(SettingsTheme.ink2)
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            PushButton(title: BatteryView.refreshLoginTitle, blue: true, small: true) { refresh() }
+        }
+        .padding(.leading, 26)
     }
 }
 

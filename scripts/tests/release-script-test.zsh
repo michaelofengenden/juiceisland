@@ -32,7 +32,7 @@ SIG=anVpY2UtcmVsZWFzZS1mYWtlLWVkMjU1MTktc2lnbmF0dXJlLWZvci10ZXN0cy1vbmx5LTAxMjM0
 git clone -q "$source_repo" "$repo"
 git -C "$repo" checkout -q -B main "$source_head"
 for f in scripts/release.sh scripts/release-fake.zsh scripts/public-settings.sh scripts/dmg-layout.swift \
-         scripts/dmg/background.png scripts/dmg/background@2x.png VERSION .gitignore; do
+         scripts/dmg/background.png scripts/dmg/background@2x.png scripts/build-app.sh scripts/build-public.sh VERSION .gitignore; do
   mkdir -p "$repo/${f:h}"; cp "$src/$f" "$repo/$f"
 done
 git -C "$repo" add scripts VERSION .gitignore
@@ -569,6 +569,74 @@ check "what would stop a real release is listed, and the run goes on" \
 rc=$(<"$W/rc")
 check "a missing slice is listed in a dry run, which goes on" \
   eval '[ $rc -eq 0 ] && said "1 thing would stop a real release" && said "Contents/Helpers/OpenIslandHooks (no x86_64)"'
+
+# --- build-app.sh and a renamed checkout (P1554) -----------------------------------------------------------------
+# A DerivedData folder records the absolute paths it was made for. build-app.sh (which release.sh runs) drops its own one
+# when any of them is outside this checkout, saying so in one line, and keeps a current one. xcodegen and xcodebuild are
+# stand-ins first on PATH: xcodebuild notes whether the folder it was given still holds its marker, and fails, so no
+# build runs. The folders are fakes: an info.plist and a workspace-state.json, as Xcode writes them.
+start "build-app: a DerivedData folder made for another folder is removed before the build, a current one kept"
+mkdir -p "$W/xcbin"
+print -r -- '#!/bin/zsh
+exit 0' > "$W/xcbin/xcodegen"
+print -r -- '#!/bin/zsh
+d=
+while (( $# )); do [[ $1 == -derivedDataPath ]] && { d=$2; break }; shift; done
+if [[ -e $d/marker ]]; then print -r -- "$d kept" >> "$XCB_LOG"; else print -r -- "$d gone" >> "$XCB_LOG"; fi
+exit 3' > "$W/xcbin/xcodebuild"
+chmod +x "$W/xcbin/xcodegen" "$W/xcbin/xcodebuild"
+# <folder under output/> <its WorkspacePath> <a package artifact's path> [escaped: the path's slashes written \/]
+fake_derived() {
+  local d=$repo/output/$1 art=$3
+  rm -rf "$d"; mkdir -p "$d/SourcePackages"; : > "$d/marker"
+  /usr/libexec/PlistBuddy -c "Add :WorkspacePath string $2" "$d/info.plist" >/dev/null
+  [[ -z ${4-} ]] || art=${art//\//\\/}
+  print -r -- "{
+  \"object\" : {
+    \"artifacts\" : [
+      {
+        \"kind\" : { \"xcframework\" : { } },
+        \"packageRef\" : { \"identity\" : \"sparkle\", \"kind\" : \"remoteSourceControl\", \"location\" : \"https://github.com/sparkle-project/Sparkle\", \"name\" : \"Sparkle\" },
+        \"path\" : \"$art\",
+        \"targetName\" : \"Sparkle\"
+      }
+    ],
+    \"dependencies\" : [ ],
+    \"prebuilts\" : [ ]
+  },
+  \"version\" : 7
+}" > "$d/SourcePackages/workspace-state.json"
+}
+build_app() {
+  rm -f "$W/xcb.log"; : > "$W/xcb.log"
+  rc=0; (cd "$repo" && PATH=$W/xcbin:$PATH XCB_LOG=$W/xcb.log zsh scripts/build-app.sh "$@") > "$W/out" 2>&1 || rc=$?
+}
+old=/Users/someone/Developer/old-checkout
+art=SourcePackages/artifacts/sparkle/Sparkle/Sparkle.xcframework
+fake_derived dd-public.noindex "$old/Juice.xcodeproj" "$old/output/dd-public.noindex/$art"
+build_app --public
+check "a folder made for the old folder is removed before xcodebuild runs" \
+  eval '[ ! -e "$repo/output/dd-public.noindex/marker" ] && grep -qxF "output/dd-public.noindex gone" "$W/xcb.log"'
+check "says so in one line, naming the old path" \
+  eval '[ "$(grep -c "^build-app: removed output/dd-public.noindex, made for another folder ($old/Juice.xcodeproj); the build makes it again\$" "$W/out")" -eq 1 ]'
+check "the build went on (to the stand-in's failure)" [ $rc -eq 3 ]
+fake_derived dd-public.noindex "$repo/Juice.xcodeproj" "$old/output/dd-public.noindex/$art" escaped
+build_app --public
+check "a current workspace whose package still points at the old folder (slashes escaped) is removed too" \
+  eval 'grep -qxF "output/dd-public.noindex gone" "$W/xcb.log" && said "build-app: removed output/dd-public.noindex, made for another folder ($old/output/dd-public.noindex/$art)"'
+fake_derived dd-public.noindex "$repo/Juice.xcodeproj" "$repo/output/dd-public.noindex/$art"
+build_app --public
+check "a folder made here is kept, and nothing is said" \
+  eval 'grep -qxF "output/dd-public.noindex kept" "$W/xcb.log" && not_said "build-app: removed"'
+fake_derived dd.noindex "$old/JuiceIsland.xcodeproj" "$old/output/dd.noindex/$art"
+fake_derived dd-public.noindex "$old/Juice.xcodeproj" "$old/output/dd-public.noindex/$art"
+build_app
+check "a dev build drops its own stale folder, and only its own" \
+  eval 'grep -qxF "output/dd.noindex gone" "$W/xcb.log" && [ -e "$repo/output/dd-public.noindex/marker" ] && said "build-app: removed output/dd.noindex"'
+rm -rf "$repo/output/dd.noindex" "$repo/output/dd-public.noindex"
+build_app --public
+check "no folder at all: nothing removed, nothing said" eval 'grep -qxF "output/dd-public.noindex gone" "$W/xcb.log" && not_said "build-app: removed"'
+rm -rf "$repo/output/dd.noindex" "$repo/output/dd-public.noindex" "$repo/Juice.xcodeproj" "$repo/JuiceIsland.xcodeproj"
 
 print -r -- "release-script-test: $passed passed, $failed failed"
 (( failed == 0 ))

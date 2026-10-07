@@ -151,11 +151,12 @@ enum GlassFrost {
     /// widgets' does: the owner's lavender comes out #535475. Over the apps' windows only (the island, the Settings
     /// preview): the desktop panel sits on the wallpaper, never over a window.
     static let widgetFloor = 0.5
-    /// The desktop panel's floor while macOS dims its widgets (an app in front, P1214): a tenth of the dark ground, so
-    /// the panel dims with the widgets and keeps the wallpaper's colour, as they do. The only measured dimmed widget
-    /// (lavender #8A8CC8 under it came out #6F6FC4, P872) is ΔE 15.7 from the dark face alone, 17.1 at a tenth and 32.2
-    /// at the half; over the dimmed widgets' model a tenth is the closest (mean ΔE 9.4, against 10.1 with none).
-    static let widgetDimmedFloor = 0.1
+    /// The desktop panel's floor while macOS dims its widgets (an app in front): none, as in full colour. The dimmed
+    /// widgets keep the same light glass and turn their ink white (the owner's screenshot of 2026-10-05: the Batteries
+    /// widget dimmed, the same lavender with white rings, beside the panel a darker brownish mauve under the tenth of dark
+    /// ground P1214 gave it), so the panel keeps its full-colour glass and turns its ink and marks white
+    /// (`\.glassWidgetMono`, P1227).
+    static let widgetDimmedFloor = 0.0
     static let widgetMaximum = 0.6
 
     /// The veil for `frost` in Glass look `look`: Light and dark's as ever (`colour(_:)`); Widget's the dark ground, in
@@ -165,8 +166,8 @@ enum GlassFrost {
     }
 
     /// Widget's veil's strength at `frost`: from the state's floor at 0 to `widgetMaximum` at 1. Over the apps
-    /// `widgetFloor`; on the desktop with the widgets dimmed `widgetDimmedFloor`; in full colour nothing (the widgets'
-    /// own glass, the wallpaper's colour, P1205). Frost adds only the depth the owner asks for.
+    /// `widgetFloor`; on the desktop nothing, the widgets dimmed or not (the widgets' own glass, the wallpaper's colour,
+    /// P1205, P1227). Frost adds only the depth the owner asks for.
     static func widgetOpacity(_ frost: Double, state: WidgetGlassState = .overApps) -> Double {
         let floor = switch state {
         case .overApps: widgetFloor

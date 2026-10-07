@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Settings › Island (spec §4.5): look and screen, usage, sessions, quiet, mute rules. Labels only, except Glance, Quota
 /// alerts, Questions open the island (off), Stalled after, Archive idle sessions after, Show scripted runs, Answer
-/// subagents and Answer Codex on the island, Quiet while locked, Quiet while presenting, Quiet during Focus and Quiet
+/// subagents and Answer Codex in Juice, Quiet while locked, Quiet while presenting, Quiet during Focus and Quiet
 /// hours, whose effects are not obvious. Owner: stream A.
 struct IslandPane: View {
     @Environment(AppEnvironment.self) private var env
@@ -174,8 +174,8 @@ struct IslandPane: View {
                 FormRow("Answer subagents on the island", subtitle: IslandPaneText.answerSubagents) {
                     SettingsSwitch(isOn: $settings.answerSubagentsOnIsland, label: "Answer subagents on the island")
                 }
-                FormRow("Answer Codex on the island", subtitle: IslandPaneText.answerCodex) {
-                    SettingsSwitch(isOn: $settings.answerCodexOnIsland, label: "Answer Codex on the island")
+                FormRow(IslandPaneText.answerCodexTitle, subtitle: IslandPaneText.answerCodex) {
+                    SettingsSwitch(isOn: $settings.answerCodexOnIsland, label: IslandPaneText.answerCodexTitle)
                 }
             }
             FormSection("Quiet") {
@@ -248,7 +248,11 @@ enum IslandPaneText {
     /// What Answer subagents on the island costs, which its name alone does not say (P350).
     static let answerSubagents = "Claude's own prompt waits up to \(Int(SubagentHold.limit)) s."
 
-    /// What Answer Codex on the island costs, which its name alone does not say (P470).
+    /// The switch's name: Juice, as it answers on the island and in the window (P1050); "Answer Codex on the island"
+    /// until the owner's 2026-10-05, its stored key and default unchanged (P1250).
+    static let answerCodexTitle = "Answer Codex in Juice"
+
+    /// What Answer Codex in Juice costs, which its name alone does not say (P470).
     static let answerCodex = "Codex's own prompt waits up to \(Int(CodexHold.limit)) s."
 
     /// What Stalled after measures, which its name alone does not say.

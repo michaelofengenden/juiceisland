@@ -359,14 +359,11 @@ struct GlassLookTests {
 
     // MARK: Core Animation's outline
 
-    /// Whether `condition` holds within `seconds`, looked at every 50 ms: a wake on a loaded machine can come late.
+    /// Whether `condition` holds within `seconds` worth of looks (`Looks`). Counted looks, not the clock: what it waits
+    /// for (a light's or an edge's sweep, a main-queue wake after its fade) waits behind a loaded run's main actor as
+    /// each look does, and two seconds of wall clock have passed there with the wake still queued (P1253).
     static func within(_ seconds: TimeInterval, _ condition: () -> Bool) async -> Bool {
-        let end = Date().addingTimeInterval(seconds)
-        while Date() < end {
-            if condition() { return true }
-            await FramePerf.wait(0.05)
-        }
-        return condition()
+        await Looks.until(seconds, condition)
     }
 
     /// A layer of the black's view rendered alone (`CALayer.render(in:)`, the view flipped: y down), against `expected`'s

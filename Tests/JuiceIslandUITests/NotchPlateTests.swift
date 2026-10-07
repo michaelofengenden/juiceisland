@@ -158,7 +158,7 @@ struct NotchPlateTests {
         for open in [false, true] {
             if open {
                 rig.open()
-                await FramePerf.wait(1.6)
+                await FramePerf.rest(rig)
             }
             let content = try #require(rig.window.contentView)
             let image = try LiquidLookRenders.render(content, backdrop: clear, at: CACurrentMediaTime())
@@ -239,7 +239,9 @@ struct NotchPlateTests {
                                       prepare: { NotchPlateRenders.feed($0.engine, now: Date()) })
         rig.window.appearance = NSAppearance(named: look == .light ? .aqua : .darkAqua)
         await rig.start()
-        await FramePerf.wait(0.4)
+        // At rest before the line is lifted by hand: a job still to come (the pill's arrival, late under a full run's
+        // load) put the plan's own transform back over the lift before the render (P1258).
+        await FramePerf.rest(rig)
         #expect(rig.ui.pill.showsEdgeLine)
         let carrier = try #require(rig.canvas.rimCarrier?.layer)
         #expect(carrier.mask === rig.canvas.rimCarrier?.cut, "Solid cuts the line's carrier")
@@ -260,9 +262,9 @@ struct NotchPlateTests {
                 cut.removeAllAnimations()
                 cut.transform = CATransform3DMakeTranslation(0, -Self.lift, 0)
                 CATransaction.commit()
-                // The panel, as the director grows it for the taller surface.
+                // The panel, as the director grows it for the taller surface, laid out and committed at once.
                 rig.director.applyPanel(g.extent)
-                await FramePerf.wait(0.1)
+                FramePerf.frame(rig)
             }
             let content = try #require(rig.window.contentView)
             let bitmap = Bitmap(try LiquidLookRenders.render(content, backdrop: clear, at: CACurrentMediaTime()))
@@ -273,7 +275,7 @@ struct NotchPlateTests {
         }
         // The plan: opened, the line rides down to the island's foot and the cut comes back up by as much.
         rig.open()
-        await FramePerf.wait(1.6)
+        await FramePerf.rest(rig)
         let down = carrier.sublayerTransform.m42, up = try #require(rig.canvas.rimCarrier?.cut).transform.m42
         #expect(down > 100 && abs(down + up) < 0.001, "the carrier down \(down), its cut \(up)")
         rig.stop()

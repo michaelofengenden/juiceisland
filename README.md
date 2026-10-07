@@ -49,7 +49,7 @@ The first time it opens, Juice lists the agents it finds on your Mac. Connect ad
 
 **Approve**: answer its prompts from the island. **Watch**: see its sessions and jump to them, and answer its prompts there.
 
-¹ With Settings › Island › Answer Codex on the island; Watch otherwise.
+¹ With Settings › Island › Answer Codex in Juice; Watch otherwise.
 
 ² Qoder CLI; the Qoder IDE is Watch.
 
@@ -59,7 +59,7 @@ The first time it opens, Juice lists the agents it finds on your Mac. Connect ad
 
 - **Free and open source.** GPL-3.0, with no paid tier and no licence key.
 - **No analytics.** No account, no server, no crash reporter and no usage tracking.
-- **Never reads your logins.** Usage comes from the `claude` and `codex` tools' own usage requests. Juice never opens their login files or the Keychain, and never sends a prompt.
+- **Never reads your logins.** Usage comes from the `claude` and `codex` tools' own usage requests. Juice never opens their login files or the Keychain, and never sends a prompt of its own: it sends only what you type.
 - **Never touches your status line.** Your agents' own status lines stay as you set them.
 - **Changes files only when you click, with backups.** Hooks go in on Connect and come out on Remove, and a file Juice will not edit gets the exact lines to paste instead.
 
@@ -74,7 +74,7 @@ The first time it opens, Juice lists the agents it finds on your Mac. Connect ad
 <p align="center"><img src="docs/images/readme-agents.png" alt="The first run: every agent found on this Mac, each with Approve or Watch, and one Connect button" width="460"></p>
 <p>
   <img src="docs/images/readme-panel.png" alt="The desktop panel: one battery per account, and money" width="49%">
-  <img src="docs/images/readme-widget.png" alt="The widget: sessions and batteries" width="49%">
+  <img src="docs/images/readme-widget.png" alt="The Usage widget: batteries and money" width="49%">
 </p>
 <p><img src="docs/images/readme-window.png" alt="Juice as a window: batteries, money and every session"></p>
 
@@ -87,7 +87,7 @@ The first time it opens, Juice lists the agents it finds on your Mac. Connect ad
 
 Everything stays on your Mac. Juice has no server, no account and no analytics.
 
-- **Usage** comes from the `claude` and `codex` tools you already have, through their own usage requests. Juice never reads, stores or sends their login tokens, and never sends a prompt. It asks at most every 2 to 5 minutes per Claude account, and every 15 to 60 seconds per Codex account, the faster pace only near the account's limit. These are the tools' own interfaces and not all of them are documented, so an update of `claude` or `codex` can break a battery until Juice catches up. While Juice reads a Codex account, Codex also fetches its model list every few minutes, as it does whenever it runs.
+- **Usage** comes from the `claude` and `codex` tools you already have, through their own usage requests. Juice never reads, stores or sends their login tokens, and a usage read never sends a prompt. Juice sends only what you type: a reply from a session's card goes to that session, typed into its tab, or, once the tab is closed, through Claude Code's or Codex's own resume, when you press Return. It asks at most every 2 to 5 minutes per Claude account, and every 15 to 60 seconds per Codex account, the faster pace only near the account's limit. These are the tools' own interfaces and not all of them are documented, so an update of `claude` or `codex` can break a battery until Juice catches up. While Juice reads a Codex account, Codex also fetches its model list every few minutes, as it does whenever it runs.
 - **Sessions** come from the hook events each connected agent sends to Juice over a socket on your Mac, and from Claude Code's and Codex's session files in `~/.claude` and `~/.codex` (and in `~/.claude-*` and `~/.codex-*` profile folders).
 - **Money**, only for the providers you add a key for. Keys are plain files readable only by you (mode 600) under `~/.config/<provider>/`, not in the Keychain. Use a read-only key where the provider offers one.
 - **Network.** Juice talks to the network only for money (each provider's own API, with your key), to check GitHub for an update, and, for SSH hosts you set up, over `ssh`.

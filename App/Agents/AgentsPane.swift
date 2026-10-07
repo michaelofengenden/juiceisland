@@ -15,6 +15,7 @@ struct AgentsPane: View {
     var body: some View {
         let agents = env.agents
         let hooks = env.hooks
+        @Bindable var settings = env.settings
         let rows = agents.rows
         let notFound = agents.notFound
         let integrations = hooks.integrations
@@ -66,6 +67,12 @@ struct AgentsPane: View {
                     .padding(.horizontal, 10)
                 }
             }
+            // Claude Code's own background sessions (wave 8, P1450, P1470).
+            FormSection("Claude Code") {
+                FormRow(AgentsPaneText.keepRunningTitle, subtitle: AgentsPaneText.keepRunning) {
+                    SettingsSwitch(isOn: $settings.keepClaudeRunning, label: AgentsPaneText.keepRunningTitle)
+                }
+            }
             RemoteHostsSection()
             // Other apps, read-only, and only while one of them holds the buttons up.
             if integrations.vibeProfiles > 0 || !integrations.helperInBuild {
@@ -107,6 +114,13 @@ enum AgentsPaneText {
     static let removeAllMessage = "Each file is backed up first. Connect puts it back."
     /// Vibe Island beside this app: both draw their island.
     static let vibeIslandRunning = "Two islands show"
+    /// The switch that moves Claude sessions into Claude Code's own background (P1450, P1470).
+    static let keepRunningTitle = "Keep Claude sessions running when their window closes"
+    /// What it does, which its name alone does not say.
+    static var keepRunning: String {
+        "Send to island types /background into its tab, which moves it into Claude Code's background: send or clear what you "
+            + "typed there first. Sessions \(Product.name) starts begin there."
+    }
 }
 
 /// One agent: mark, name with its Approve or Watch tag, where it is set up; its state and why; then Copy and its buttons,

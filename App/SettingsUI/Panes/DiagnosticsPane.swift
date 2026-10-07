@@ -143,8 +143,12 @@ struct DiagnosticsPane: View {
 
     private func reportText(_ accounts: [DiagnosticsText.AccountEntry], _ money: [(MoneyRowModel, (next: String, status: String))],
                             bridge: String?, attention: String?, details: String?) -> String {
-        DiagnosticsText.report(lines: accounts.map { ($0.label, $0.provider, $0.line) }, money: money.map { ($0.0.name, $0.1.status) },
-                               bridge: bridge, attention: attention, attentionDetails: details, stamp: env.updateChecker.stamp)
+        // The live engine's fold decisions as they are at the click (P1430).
+        let live = env.liveSessions
+        let folds = (live?.mode == .live ? live?.engine : nil).map { DiagnosticsText.folds($0.foldNotes) } ?? []
+        return DiagnosticsText.report(lines: accounts.map { ($0.label, $0.provider, $0.line) }, money: money.map { ($0.0.name, $0.1.status) },
+                                      bridge: bridge, attention: attention, attentionDetails: details, folds: folds,
+                                      stamp: env.updateChecker.stamp)
     }
 
     private func copy(_ text: String) {

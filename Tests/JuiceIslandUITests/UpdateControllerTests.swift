@@ -27,14 +27,14 @@ struct UpdateControllerTests {
             try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
             if let script {
-                // status_to appends a state as update-app.sh does; step waits for the test's go file, so no step
-                // depends on timing: longer than any wait's patience (a loaded machine has held the main actor, and
-                // with it the controller's polls, past a 10 s step, and the stub ran on to ready unseen), and it ends
-                // the stub once the test removed the sandbox.
+                // status_to appends a state as update-app.sh does; step waits for the test's go file however long the
+                // test takes to send it, so no step depends on timing: a step that gave up after 90 s ran on to ready
+                // unseen while a full run held the main actor for minutes, and the app quit before its time (P1253).
+                // It ends the stub once the test removed the sandbox, or once the test process is gone.
                 let body = "#!/bin/zsh\nset -u\nstatus_to() { print -r -- \"$1\" >> \"$JI_STATUS_FILE\" }\n"
-                    + "self=\"$0\" go_file=\"$0.go\"\n"
-                    + "step() { local end=$(( SECONDS + \(Int(UpdateControllerTests.patience) + 30) )); "
-                    + "until [[ -e \"$go_file\" ]] || (( SECONDS > end )); do [[ -e \"$self\" ]] || exit 0; sleep 0.02; done; rm -f \"$go_file\" }\n"
+                    + "self=\"$0\" go_file=\"$0.go\" runner=$PPID\n"
+                    + "step() { until [[ -e \"$go_file\" ]]; do [[ -e \"$self\" ]] && kill -0 $runner 2>/dev/null || exit 0; "
+                    + "sleep 0.02; done; rm -f \"$go_file\" }\n"
                     + "print -r -- \"stub args: $*\"\nprint -r -- \"stub cwd: $PWD\"\n"
                     + "print -r -- \"stub stage: ${JI_UPDATE_STAGE-none}\"\n" + script + "\n"
                 try body.write(to: self.script, atomically: true, encoding: .utf8)
@@ -70,26 +70,25 @@ struct UpdateControllerTests {
         var now = Date(timeIntervalSince1970: 1_790_000_000)
     }
 
-    /// How long a wait on the zsh stub may take: it answers in well under a second, but a machine building several
-    /// branches at once has made it take over 10 s. A wait ends as soon as its condition holds, so a pass costs nothing.
+    /// How many seconds' worth of looks a wait on the zsh stub may take (`Looks`): it answers in well under a second,
+    /// but a machine building several branches at once has made it take over 10 s. The looks are counted, not the clock:
+    /// a whole parallel run has held the main actor, and with it every look and the controller's polls, for minutes, so a
+    /// wall-clock patience ran out with a handful of looks taken (P1253). A wait ends as soon as its condition holds.
     nonisolated static let patience: TimeInterval = 60
 
-    /// Samples `phase` until `done` holds or `patience` passes; returns every distinct phase seen.
+    /// Samples `phase` until `done` holds or `patience`'s looks find it false; returns every distinct phase seen.
     private func follow(_ controller: UpdateController, until done: () -> Bool) async -> [UpdatePhase] {
         var seen: [UpdatePhase] = [controller.phase]
-        let deadline = Date().addingTimeInterval(Self.patience)
-        while Date() < deadline, !done() {
-            try? await Task.sleep(for: .milliseconds(10))
+        _ = await Looks.until(Self.patience) {
             if seen.last != controller.phase { seen.append(controller.phase) }
+            return done()
         }
         return seen
     }
 
-    /// Waits (up to `patience`) until `done` holds.
+    /// Waits (`patience`'s looks at most) until `done` holds.
     private func wait(until done: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(Self.patience)
-        while Date() < deadline, !done() { try? await Task.sleep(for: .milliseconds(10)) }
-        return done()
+        await Looks.until(Self.patience, done)
     }
 
     /// The time past ready is the test's clock (P293): with the real one, a main actor held 5 s between the ask and the

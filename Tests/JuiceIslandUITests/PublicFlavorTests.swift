@@ -95,17 +95,22 @@ struct PublicFlavorTests {
         #expect(paths.logFile.path.hasSuffix("Library/Logs/Juice Island/update.log"))
         #expect(UpdateController.Paths.standard(for: .development).prepareStatusFile.lastPathComponent == "update-prepare-dev")
         #expect(UpdateText.menuTitle(available: UpdateInfo(newer: 3, subjects: []), phase: .idle) == "Update Juice Island (3 changes)")
-        #expect(AboutPane.buildLine(BuildStamp(commit: nil, repoPath: nil), flavor: .private, version: "0.1.0") == "unknown build")
-        #expect(AboutPane.buildLine(BuildStamp(commit: nil, repoPath: nil), flavor: Self.publicFlavor, version: "1.2.0")
+        // Either flavor shows the VERSION file's version, which its build puts in the bundle (P1251).
+        #expect(AboutPane.buildLine(BuildStamp(commit: nil, repoPath: nil), version: "0.5.0") == "Version 0.5.0 · unknown build")
+        #expect(AboutPane.buildLine(BuildStamp(commit: nil, repoPath: nil), version: nil) == "unknown build")
+        #expect(AboutPane.buildLine(BuildStamp(commit: nil, repoPath: nil), version: "1.2.0")
             == "Version 1.2.0 · unknown build")
     }
 
     @Test func thePrivateAppKeepsItsUpdaterWhateverItIsHanded() {
-        let feed = FakeFeed()
-        let (checker, controller) = AppEnvironment.updates(stamp: BuildStamp(commit: nil, repoPath: nil), settings: .ephemeral(),
-                                                           flavor: .private, feed: feed, memory: .inMemory())
-        #expect(checker.source == .git && checker.feed == nil && controller.feed == nil)
-        #expect(!checker.off)
+        // A version (the bundle's, VERSION's since P1251) changes nothing: the private app compares commits only.
+        for version in [nil, "0.1.0", "99.0.0"] as [String?] {
+            let feed = FakeFeed()
+            let (checker, controller) = AppEnvironment.updates(stamp: BuildStamp(commit: nil, repoPath: nil), settings: .ephemeral(),
+                                                               flavor: .private, feed: feed, version: version, memory: .inMemory())
+            #expect(checker.source == .git && checker.feed == nil && controller.feed == nil)
+            #expect(!checker.off)
+        }
     }
 
     // MARK: The feed's run on the Update control (P825)

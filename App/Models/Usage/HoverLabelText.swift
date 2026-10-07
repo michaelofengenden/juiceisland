@@ -70,7 +70,14 @@ enum HoverLabelText {
         return HoverLabel(name: name, parts: String(text.dropFirst(name.count + 3)).components(separatedBy: " · "))
     }
 
+    /// A Codex login over 8 days old whose reads still work ends with the early word (P1553), the first part to go where
+    /// room is short.
     private static func accountParts(_ battery: BatteryModel, record: AccountRecord?, now: Date) -> [String] {
+        let parts = stateParts(battery, record: record, now: now)
+        return battery.loginAging ? parts + [Rules.loginAgingWords] : parts
+    }
+
+    private static func stateParts(_ battery: BatteryModel, record: AccountRecord?, now: Date) -> [String] {
         // The reading as it stands now: a window past its reset is full until the next read (P460).
         let reading = record?.lastGood.map { Rules.current($0, now: now) }
         let tightest = reading.map(Rules.countedWindows)?.min { $0.percentLeft < $1.percentLeft }
@@ -96,6 +103,8 @@ enum HoverLabelText {
         case .unknown: return ["no reading yet"]
         case .noPlan: return ["no plan", "subscription ended?"]
         case .noLimits: return ["no limits", "billed by usage"]
+        // Never "rate limited" (P1550): the short form, then what to do while there is room.
+        case .loginLapsed: return [Rules.loginLapsedShort.lowercased(), "open Codex once"]
         }
     }
 }

@@ -9,14 +9,18 @@ public struct BatteryModel: Sendable, Equatable, Hashable, Identifiable {
     public var hoverLabel: String
     /// A counted window that runs out before its reset at the current pace (P125); only while the battery is available.
     public var runOut: RunOut?
+    /// A Codex login over 8 days old whose reads still work (`Rules.loginAging`, P1553): its hover ends with the early word.
+    public var loginAging: Bool
 
-    public init(id: String, alias: String, state: AccountState, isNext: Bool, hoverLabel: String, runOut: RunOut? = nil) {
+    public init(id: String, alias: String, state: AccountState, isNext: Bool, hoverLabel: String, runOut: RunOut? = nil,
+                loginAging: Bool = false) {
         self.id = id
         self.alias = alias
         self.state = state
         self.isNext = isNext
         self.hoverLabel = hoverLabel
         self.runOut = runOut
+        self.loginAging = loginAging
     }
 }
 

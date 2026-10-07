@@ -277,6 +277,11 @@ struct AShellTests {
         #expect(start.pixel(x: stage.from.midX, y: stage.from.minY + 10) == .blue)
         #expect(start.pixel(x: stage.from.midX, y: stage.to.midY) == .clear)
 
+        // Held in a transaction of the test's own until the checks are done: a layer on no display drops a finished or
+        // unstarted animation at the main thread's next commit, and a full run has had one come between the play and the
+        // look (the bounds animation found gone). Nested, the play's own commit waits for this one (P1255).
+        CATransaction.begin()
+        defer { CATransaction.commit() }
         WindowFold.play(ghost, stage: stage)
         #expect(ghost.sublayers?.map(\.frame) == [stage.to, stage.to])
         #expect(ghost.opacity == 0)

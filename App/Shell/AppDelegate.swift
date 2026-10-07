@@ -1,4 +1,5 @@
 import AppKit
+import IslandEngine
 import Observation
 
 /// Owns the windows and switches modes. Window mode: the app window and a Dock icon. Island mode: the island panel,
@@ -40,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             setShowAs: { [weak self] mode in self?.env.settings.showAs = mode },
             quit: { AppQuit.request() })
         env.actions.showWelcome = { [weak self] in self?.showWelcome() }
+        env.actions.foldIn = { [weak self] bounds in self?.playFoldIn(bounds) }
         // The welcome shows by itself only on a Mac where this app never ran and no Juice hooks are installed: never on
         // the owner's (P950). Decided before any window, so Window mode's window waits for it; the few hook files are
         // read only where there was no earlier launch. The welcome's own mark counts as one.
@@ -53,7 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let desktopPanel = DesktopPanelController(env: env)
         self.desktopPanel = desktopPanel
         env.actions.resetPanelPosition = { [weak desktopPanel] in desktopPanel?.resetPosition() }
-        desktopPanel.start()
+        // Only a build that feeds the widget lets it take the panel's place (P1280); the first such launch looks at the
+        // widgets placed before the panel shows (P1281).
+        widgetFeed = WidgetFeed.app(env: env)
+        env.settings.widgetFed = widgetFeed != nil
+        // A widget on the desktop still running the build this one replaced ends, and WidgetKit starts this one's (P1400).
+        DispatchQueue.global(qos: .utility).async { WidgetExtensionRestart.run() }
+        PanelWidgetChoice.settle(env.settings) { [weak desktopPanel] in desktopPanel?.start() }
         dockIcon = DockIcon(settings: env.settings)
         if firstRun { showWelcome(firstRun: true) } else { applyMode() }
         observeMode()
@@ -72,7 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.updateController.restoreAfterLaunch()
         UpdateQuitSignal.install { [weak self] in self?.env.updateController.scriptAskedToQuit() }
         env.updateChecker.start()
-        widgetFeed = WidgetFeed.app(env: env)
         widgetFeed?.start()
         env.followUps?.looking = { [weak self] in self?.ownerLooks ?? false }
         env.followUps?.start()
@@ -222,6 +229,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch action {
         case .jump:
             env.sessions.jumpToNextNeedsYou()
+        case .send:
+            // The tab in front, when it is a session's whose tab is known (P1300): the same as its row's Send to island.
+            guard env.settings.showAs == .island else { return }
+            let env = env
+            Task { @MainActor in
+                if let id = await env.sessions.frontmostFoldable() { env.sendToIsland(id) }
+            }
         case .open, .switcher:
             guard env.settings.showAs == .window else {
                 if action == .switcher { island?.switchWithKeys() } else { island?.openWithKeys() }
@@ -237,6 +251,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 env.windowSelection = order.first
             }
         }
+    }
+
+    /// A session was sent to the island: its window's glass shape flies from where the window is into the pill, whether
+    /// the window went into the Dock or stayed for its other tabs (P1302, P1360). The bounds are AppleScript's, from the
+    /// main display's top-left corner.
+    private func playFoldIn(_ bounds: TuckBounds) {
+        guard env.settings.showAs == .island, let main = NSScreen.screens.first,
+              let frame = bounds.frame(mainDisplayHeight: main.frame.height) else { return }
+        let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? main
+        WindowFold.flyIn(from: frame, into: island?.pillFrame ?? WindowFold.target(screenFrame: screen.frame))
     }
 
     // MARK: Windows

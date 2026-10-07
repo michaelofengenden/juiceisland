@@ -60,6 +60,11 @@ extension EngineFixtures {
         // No peek reads a transcript either (P311).
         dependencies.readPeek = nil
         dependencies.processExists = { _ in true }
+        // Nor a made-up pid's parent or name (P1415).
+        dependencies.parentPID = { _ in nil }
+        dependencies.processName = { _ in nil }
+        // Nor is a made-up pid asked whether it is a Codex app-server (P1485).
+        dependencies.isCodexServer = { _ in false }
         // No fork's transcript is read either (P441).
         dependencies.readForkParent = { _ in nil }
         configure?(&dependencies)
